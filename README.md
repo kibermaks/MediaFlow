@@ -12,11 +12,19 @@
 
 </div>
 
-![MediaFlow image and video wall](docs/MediaFlow.jpg)
+<p align="center">
+  <img src="docs/MediaFlowEmpty.jpg" width="86%" alt="MediaFlow empty canvas asking the user to drop images or videos" />
+</p>
 
 MediaFlow is a Metal-backed macOS app for turning a TV, spare monitor, or unused screen into a fullscreen live image and video wall. Add a larger library of local photos and videos than can fit on screen, choose how many items should be visible at once, and use different wall, collage, strip, and comparison layouts while keeping the canvas filled edge-to-edge.
 
-![MediaFlow demo with mixed image and video layouts](docs/MediaFlowDemo.gif)
+<p align="center">
+  <img src="docs/MediaFlow.jpg" width="100%" alt="MediaFlow image and video wall" />
+</p>
+
+<p align="center">
+  <img src="docs/MediaFlowDemo.gif" width="100%" alt="MediaFlow demo with mixed image and video layouts" />
+</p>
 
 The app is designed for ambient local playback, live walls, and visual comparison across mixed media: a floating Flow Library, drag-and-drop and picker ingest, Photos import, round-robin or random rotation, optional duplicate random slots, video loops, per-item speed controls, A-B segments, crop-as-zone layout, Metal quality diagnostics, frame interpolation, denoise, tone recovery, and saved encrypted playback layouts.
 
