@@ -9,12 +9,12 @@ DMG_DIR="${DMG_DIR:-$ROOT/dmg_output}"
 VOLUME_NAME="${DMG_VOLUME_NAME:-$APP_NAME Installer}"
 WINDOW_LEFT="${DMG_WINDOW_LEFT:-240}"
 WINDOW_TOP="${DMG_WINDOW_TOP:-100}"
-WINDOW_WIDTH="${DMG_WINDOW_WIDTH:-760}"
-WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-440}"
+WINDOW_WIDTH="${DMG_WINDOW_WIDTH:-900}"
+WINDOW_HEIGHT="${DMG_WINDOW_HEIGHT:-520}"
 ICON_SIZE="${DMG_ICON_SIZE:-104}"
 APP_POS_X="${DMG_APP_POS_X:-220}"
 APP_POS_Y="${DMG_APP_POS_Y:-245}"
-APPLICATIONS_POS_X="${DMG_APPLICATIONS_POS_X:-560}"
+APPLICATIONS_POS_X="${DMG_APPLICATIONS_POS_X:-610}"
 APPLICATIONS_POS_Y="${DMG_APPLICATIONS_POS_Y:-245}"
 SKIP_FINDER_LAYOUT="${SKIP_FINDER_LAYOUT:-false}"
 SIGN_IDENTITY="${SIGN_IDENTITY:-}"
@@ -77,8 +77,8 @@ image.lockFocus()
 
 let bounds = NSRect(x: 0, y: 0, width: width, height: height)
 NSGradient(colors: [
-    NSColor(calibratedRed: 0.055, green: 0.061, blue: 0.070, alpha: 1.0),
-    NSColor(calibratedRed: 0.115, green: 0.125, blue: 0.145, alpha: 1.0)
+    NSColor(calibratedRed: 0.965, green: 0.985, blue: 1.000, alpha: 1.0),
+    NSColor(calibratedRed: 0.875, green: 0.920, blue: 0.965, alpha: 1.0)
 ])?.draw(in: bounds, angle: -90)
 
 func drawGlow(center: NSPoint, radius: CGFloat, color: NSColor) {
@@ -89,10 +89,10 @@ func drawGlow(center: NSPoint, radius: CGFloat, color: NSColor) {
     ])?.draw(in: NSBezierPath(ovalIn: rect), relativeCenterPosition: .zero)
 }
 
-drawGlow(center: NSPoint(x: width * 0.24, y: height * 0.72), radius: 210, color: NSColor(calibratedRed: 0.04, green: 0.78, blue: 0.88, alpha: 1))
-drawGlow(center: NSPoint(x: width * 0.82, y: height * 0.25), radius: 230, color: NSColor(calibratedRed: 0.55, green: 0.23, blue: 0.95, alpha: 1))
+drawGlow(center: NSPoint(x: width * 0.24, y: height * 0.72), radius: 210, color: NSColor(calibratedRed: 0.02, green: 0.72, blue: 0.84, alpha: 1))
+drawGlow(center: NSPoint(x: width * 0.82, y: height * 0.25), radius: 230, color: NSColor(calibratedRed: 0.62, green: 0.34, blue: 1.00, alpha: 1))
 
-let arrowY = min(appY, applicationsY) - 26
+let arrowY = height - min(appY, applicationsY)
 let arrowStart = NSPoint(x: appX + 92, y: arrowY)
 let arrowEnd = NSPoint(x: applicationsX - 92, y: arrowY)
 
@@ -101,7 +101,7 @@ shadow.move(to: NSPoint(x: arrowStart.x + 0, y: arrowStart.y - 2))
 shadow.line(to: NSPoint(x: arrowEnd.x + 0, y: arrowEnd.y - 2))
 shadow.lineWidth = 7
 shadow.lineCapStyle = .round
-NSColor.black.withAlphaComponent(0.30).setStroke()
+NSColor(calibratedRed: 0.12, green: 0.24, blue: 0.32, alpha: 0.16).setStroke()
 shadow.stroke()
 
 let arrow = NSBezierPath()
@@ -165,19 +165,12 @@ remove_packaging_metadata "$TEMP_DIR"
   >/dev/null
 
 if [[ "$SKIP_FINDER_LAYOUT" != "true" ]]; then
-  ATTACH_OUTPUT="$(/usr/bin/hdiutil attach "$TEMP_DMG" -readwrite -noverify -noautoopen -nobrowse)"
-  MOUNT_DIR="$(printf '%s\n' "$ATTACH_OUTPUT" | /usr/bin/awk -F '\t' '/^\/dev\// { mount=$NF } END { print mount }')"
-  if [[ -z "$MOUNT_DIR" ]]; then
-    echo "Could not determine DMG mount path." >&2
-    printf '%s\n' "$ATTACH_OUTPUT" >&2
-    exit 1
-  fi
-  /usr/bin/chflags hidden "$MOUNT_DIR/.background" 2>/dev/null || true
+  /usr/bin/hdiutil attach "$TEMP_DMG" -readwrite -noverify -mountpoint "$MOUNT_DIR" >/dev/null
   /bin/sleep 2
   WINDOW_RIGHT=$((WINDOW_LEFT + WINDOW_WIDTH))
   WINDOW_BOTTOM=$((WINDOW_TOP + WINDOW_HEIGHT))
 
-  /usr/bin/osascript - "$(basename "$MOUNT_DIR")" "$APP_FILE" "$WINDOW_LEFT" "$WINDOW_TOP" "$WINDOW_RIGHT" "$WINDOW_BOTTOM" "$ICON_SIZE" "$APP_POS_X" "$APP_POS_Y" "$APPLICATIONS_POS_X" "$APPLICATIONS_POS_Y" <<'APPLESCRIPT'
+  /usr/bin/osascript - "$VOLUME_NAME" "$APP_FILE" "$WINDOW_LEFT" "$WINDOW_TOP" "$WINDOW_RIGHT" "$WINDOW_BOTTOM" "$ICON_SIZE" "$APP_POS_X" "$APP_POS_Y" "$APPLICATIONS_POS_X" "$APPLICATIONS_POS_Y" <<'APPLESCRIPT'
 on run argv
 set volumeName to item 1 of argv
 set appFile to item 2 of argv
@@ -190,8 +183,9 @@ set appPosX to item 8 of argv as integer
 set appPosY to item 9 of argv as integer
 set applicationsPosX to item 10 of argv as integer
 set applicationsPosY to item 11 of argv as integer
+set textSize to 13
 
-with timeout of 30 seconds
+with timeout of 60 seconds
 tell application "Finder"
   tell disk (volumeName as string)
     open
@@ -205,19 +199,33 @@ tell application "Finder"
         set pathbar visible to false
       end try
       set the bounds to {windowLeft, windowTop, windowRight, windowBottom}
+      set position of every item to {windowRight + 100, 100}
     end tell
 
     set theViewOptions to the icon view options of container window
     tell theViewOptions
       set arrangement to not arranged
       set icon size to dmgIconSize
+      set text size to textSize
     end tell
+
     set background picture of theViewOptions to file ".background:dmg-background.png"
     set position of item appFile of container window to {appPosX, appPosY}
     set position of item "Applications" of container window to {applicationsPosX, applicationsPosY}
 
     update without registering applications
+    close
+    open
     delay 1
+
+    tell container window
+      set statusbar visible to false
+      set the bounds to {windowLeft, windowTop, windowRight - 10, windowBottom - 10}
+    end tell
+    delay 1
+    set the bounds of container window to {windowLeft, windowTop, windowRight, windowBottom}
+    update without registering applications
+    delay 3
     close
   end tell
 end tell
@@ -225,6 +233,7 @@ end timeout
 end run
 APPLESCRIPT
 
+  /usr/bin/chflags hidden "$MOUNT_DIR/.background" 2>/dev/null || true
   /bin/sync
   remove_dmg_volume_metadata "$MOUNT_DIR"
   /bin/sleep 1

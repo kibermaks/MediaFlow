@@ -3632,8 +3632,10 @@ private final class MetalCollageView: MTKView {
                 descriptor.storageMode = .private
                 if let texture = device?.makeTexture(descriptor: descriptor) {
                     let normalized = ciImage.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+                    // Keep EXIF orientation, then write rows in the top-left texture space used by the renderer.
+                    let metalOriented = normalized.transformed(by: CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(height)))
                     imageContext.render(
-                        normalized,
+                        metalOriented,
                         to: texture,
                         commandBuffer: nil,
                         bounds: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)),

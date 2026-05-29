@@ -74,7 +74,7 @@ Verify the latest DMG:
 ```
 
 The generated installer is written under `dmg_output/`; its filename is derived from the app bundle version.
-The DMG script uses a headless layout by default for reliability. Set `SKIP_FINDER_LAYOUT=false` if you want to try Finder icon positioning locally.
+The DMG script writes a Finder layout with a hidden `.background/dmg-background.png`, a MediaFlow-colored drag arrow, `MediaFlow.app`, and an `Applications` symlink. Set `SKIP_FINDER_LAYOUT=true` only if Finder AppleScript is blocked in automation.
 
 For public distribution, sign with Developer ID and notarize. The exact commands are documented in [BUILD.md](BUILD.md).
 

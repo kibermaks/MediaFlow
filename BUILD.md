@@ -77,12 +77,12 @@ Create an installer DMG:
 ./scripts/create-dmg.sh
 ```
 
-The script creates a versioned DMG under `dmg_output/` with `MediaFlow.app` and an `Applications` symlink. It uses a headless layout by default because Finder AppleScript can hang in automated runs.
+The script creates a versioned DMG under `dmg_output/` with `MediaFlow.app`, an `Applications` symlink, and a Finder layout. The layout stores a hidden `.background/dmg-background.png` with a light Finder-readable background and the MediaFlow-style cyan/violet drag arrow.
 
-To try Finder icon positioning locally:
+If Finder AppleScript is blocked in automation, build a plain DMG without custom layout:
 
 ```sh
-SKIP_FINDER_LAYOUT=false ./scripts/create-dmg.sh
+SKIP_FINDER_LAYOUT=true ./scripts/create-dmg.sh
 ```
 
 Verify the latest DMG:
