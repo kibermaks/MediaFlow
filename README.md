@@ -4,7 +4,7 @@
 
 <img src="Assets/AppIcon-1024.png" width="96" height="96" alt="MediaFlow app icon" />
 
-**A native macOS canvas for arranging photos and videos into a fullscreen live collage.**
+**A native macOS canvas for building live image/video walls, collages, and comparison layouts.**
 
 ![macOS](https://img.shields.io/badge/macOS-native-blue.svg)
 ![Swift](https://img.shields.io/badge/Swift-SwiftPM-orange.svg)
@@ -12,13 +12,17 @@
 
 </div>
 
-MediaFlow is a Metal-backed macOS app for turning a TV, spare monitor, or unused screen into a fullscreen live memory wall. Add a larger library of local photos and videos than can fit on screen, choose how many items should be visible at once, and let MediaFlow rotate the wall while keeping the canvas filled edge-to-edge.
+![MediaFlow image and video wall](docs/MediaFlow.jpg)
 
-The app is designed for ambient local playback and visual comparison: a floating Flow Library, drag-and-drop and picker ingest, Photos import, round-robin or random rotation, optional duplicate random slots, video loops, per-item speed controls, A-B segments, crop-as-zone layout, Metal quality diagnostics, frame interpolation, denoise, tone recovery, and saved encrypted playback layouts.
+MediaFlow is a Metal-backed macOS app for turning a TV, spare monitor, or unused screen into a fullscreen live image and video wall. Add a larger library of local photos and videos than can fit on screen, choose how many items should be visible at once, and use different wall, collage, strip, and comparison layouts while keeping the canvas filled edge-to-edge.
+
+![MediaFlow demo with mixed image and video layouts](docs/MediaFlowDemo.gif)
+
+The app is designed for ambient local playback, live walls, and visual comparison across mixed media: a floating Flow Library, drag-and-drop and picker ingest, Photos import, round-robin or random rotation, optional duplicate random slots, video loops, per-item speed controls, A-B segments, crop-as-zone layout, Metal quality diagnostics, frame interpolation, denoise, tone recovery, and saved encrypted playback layouts.
 
 ## Features
 
-- Native AppKit + Metal rendering for photos and videos on a fullscreen TV, spare screen, or live memory wall.
+- Native AppKit + Metal rendering for photos and videos on a fullscreen TV, spare screen, live media wall, or comparison layout.
 - Floating **Flow Library** for keeping a larger media pool available without forcing every item onto the visible wall.
 - Drag-and-drop ingest, **File -> Add Files...**, **File -> Add From Photos...**, and Finder **Open With** registration for images and videos.
 - Configurable maximum visible items so the screen stays readable even when the library is much larger.
