@@ -126,6 +126,11 @@ extension MetalCollageView {
         rotate(item: hoverItem, deltaQuarterTurns: 1)
     }
 
+    @objc func rotateHoveredItemHalfTurn() {
+        guard let hoverItem else { return }
+        rotate(item: hoverItem, deltaQuarterTurns: 2)
+    }
+
     @objc func rotateFocusedItemLeft() {
         guard let item = keyboardTargetItem() else { return }
         rotate(item: item, deltaQuarterTurns: -1)
@@ -134,6 +139,11 @@ extension MetalCollageView {
     @objc func rotateFocusedItemRight() {
         guard let item = keyboardTargetItem() else { return }
         rotate(item: item, deltaQuarterTurns: 1)
+    }
+
+    @objc func rotateFocusedItemHalfTurn() {
+        guard let item = keyboardTargetItem() else { return }
+        rotate(item: item, deltaQuarterTurns: 2)
     }
 
     @objc func resetFocusedItemRotation() {

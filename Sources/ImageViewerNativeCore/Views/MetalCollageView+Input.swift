@@ -332,6 +332,10 @@ extension MetalCollageView {
             rotateFocusedItemRight()
             return true
         }
+        if !commandDown, event.keyCode == 15 {
+            rotateFocusedItemHalfTurn()
+            return true
+        }
         if !commandDown, event.keyCode == 49 {
             let shouldPause = items.contains { $0.isVideoPlaying }
             let visibleIDs = Set(visibleSlots.map { $0.item.id })

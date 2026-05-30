@@ -140,6 +140,7 @@ Hotkeys are handled by physical key position, so they keep working under non-Lat
 - Shift-drag an item over another to reorder layout.
 - Mouse wheel over an item zooms it, clamped to 100% minimum.
 - Enable optional hover tools from **View -> Show Hover Item Tools**.
+- Rotate items with **Item -> Rotate Left/Right/180** or `[` / `]` / `R`.
 - Use **Crop** then drag a rectangle, or Option-drag an item directly, to apply a crop aspect to that item.
 
 ## Save And Load

@@ -48,7 +48,7 @@ Last updated: 2026-05-28.
 ### Manual layout
 - Shift-drag-to-reorder: drag any item over another while holding `Shift`; drop inserts before the target.
 - Enlarge/Reduce are available from hover controls, the Item menu, and `+` / `-`.
-- Rotate Left/Right are available from hover controls, the Item menu, and `[` / `]`.
+- Rotate Left/Right/180 are available from hover controls and the Item menu, with `[` / `]` / `R` hotkeys.
 - Item weight is saved so proportions survive relayouts and layout files.
 
 ### Zone (crop to drawn aspect)

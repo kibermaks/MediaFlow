@@ -34,6 +34,7 @@ extension MetalCollageView {
         addToolButton(symbol: "minus.magnifyingglass", fallbackTitle: "-", tooltip: "Zoom out", #selector(zoomOutHoveredItem))
         addToolButton(symbol: "hand.draw", fallbackTitle: "P", tooltip: "Pan visible content", #selector(panHoveredItem))
         addToolButton(symbol: "rotate.left", fallbackTitle: "L", tooltip: "Rotate item left", #selector(rotateHoveredItemLeft))
+        addToolButton(symbol: "arrow.triangle.2.circlepath", fallbackTitle: "180", tooltip: "Rotate item 180 degrees", #selector(rotateHoveredItemHalfTurn))
         addToolButton(symbol: "rotate.right", fallbackTitle: "R", tooltip: "Rotate item right", #selector(rotateHoveredItemRight))
 
         addSubview(toolPanel)
@@ -56,7 +57,7 @@ extension MetalCollageView {
         playButton.action = #selector(toggleSelectedVideoPlayback)
         videoStack.addArrangedSubview(playButton)
 
-        configureVideoIconButton(playbackModeButton, symbol: "repeat", fallbackTitle: "Loop", tooltip: "Toggle Loop or Swing playback", iconPointSize: 16)
+        configureVideoIconButton(playbackModeButton, symbol: "repeat", fallbackTitle: "Lp", tooltip: "Loop playback is on. Press to switch to Swing.", accent: true, iconPointSize: 16)
         playbackModeButton.target = self
         playbackModeButton.action = #selector(toggleSelectedVideoPlaybackMode)
         videoStack.addArrangedSubview(playbackModeButton)

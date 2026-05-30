@@ -23,6 +23,7 @@ extension MetalCollageView {
             item.playWhenVisible = true
             resumePlayback(for: item)
         }
+        overlay.needsDisplay = true
         tickVideoUI()
     }
 
@@ -46,6 +47,7 @@ extension MetalCollageView {
         if item.isVideoPlaying {
             resumePlayback(for: item)
         }
+        overlay.needsDisplay = true
         tickVideoUI()
     }
 
@@ -293,12 +295,13 @@ extension MetalCollageView {
         speedLabel.stringValue = String(format: "%.2fx", item.speed)
         timeLabel.stringValue = "\(formatTime(item.currentTimeSeconds)) / \(formatTime(item.durationSeconds))"
         let mode = item.playbackMode
-        setVideoButtonAppearance(playbackModeButton, accent: mode == .swing)
+        playbackModeButton.state = mode == .loop ? .on : .off
+        setVideoButtonAppearance(playbackModeButton, accent: mode == .loop)
         setIcon(
             playbackModeButton,
-            symbol: mode == .swing ? "arrow.left.arrow.right" : "repeat",
-            fallbackTitle: mode == .swing ? "Sw" : "Lp",
-            tooltip: mode == .swing ? "Swing playback: play backward at the end" : "Loop playback: restart at the end",
+            symbol: "repeat",
+            fallbackTitle: "Lp",
+            tooltip: mode == .loop ? "Loop playback is on. Press to switch to Swing." : "Swing playback is on. Press to switch to Loop.",
             pointSize: 16
         )
         restoreABButton.isHidden = !item.hasSavedABHistory
@@ -393,26 +396,13 @@ extension MetalCollageView {
     }
 
     func enforceSwingLoops(for item: CollageItem, loops: [(a: Double, b: Double)], time: Double, guardBand: Double) {
-        guard !loops.isEmpty else { return }
-        if let loop = loops.first(where: { time >= $0.a - guardBand && time <= $0.b + guardBand }) {
-            if item.normalizedSwingDirection > 0, time >= loop.b - guardBand {
-                seekSwingingPlayer(item, to: max(loop.a, loop.b - 0.02), direction: -1)
-            } else if item.normalizedSwingDirection < 0, time <= loop.a + guardBand {
-                seekSwingingPlayer(item, to: loop.a, direction: 1)
-            }
-            return
-        }
-
-        let target: Double
-        let direction: Float
-        if item.normalizedSwingDirection < 0, let previous = loops.last(where: { $0.b < time }) {
-            target = previous.b
-            direction = -1
-        } else {
-            target = (loops.first { $0.a > time } ?? loops[0]).a
-            direction = 1
-        }
-        seekSwingingPlayer(item, to: target, direction: direction)
+        guard let decision = VideoLoopBoundaryPlanner.swingDecision(
+            loops: loops,
+            time: time,
+            direction: item.normalizedSwingDirection,
+            guardBand: guardBand
+        ) else { return }
+        seekSwingingPlayer(item, to: decision.target, direction: decision.direction)
     }
 
     func formatTime(_ seconds: Double) -> String {

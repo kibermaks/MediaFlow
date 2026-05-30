@@ -58,5 +58,47 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(item.visibleAspect, 0.5, accuracy: 0.001)
         item.rotationQuarterTurns = -1
         XCTAssertEqual(item.rotationQuarterTurns, 3)
+        item.rotationQuarterTurns = item.rotationQuarterTurns + 2
+        XCTAssertEqual(item.rotationQuarterTurns, 1)
+    }
+
+    func testSwingPlannerWalksMultipleABLoopsBackAndForth() throws {
+        let loops = [(a: 1.0, b: 2.0), (a: 4.0, b: 5.0), (a: 8.0, b: 9.0)]
+
+        let forwardToNext = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
+            loops: loops,
+            time: 1.96,
+            direction: 1,
+            guardBand: 0.05
+        ))
+        XCTAssertEqual(forwardToNext.target, 4.0, accuracy: 0.001)
+        XCTAssertEqual(forwardToNext.direction, 1)
+
+        let reverseToPrevious = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
+            loops: loops,
+            time: 4.03,
+            direction: -1,
+            guardBand: 0.05
+        ))
+        XCTAssertEqual(reverseToPrevious.target, 2.0, accuracy: 0.001)
+        XCTAssertEqual(reverseToPrevious.direction, -1)
+
+        let reverseAtEnd = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
+            loops: loops,
+            time: 8.96,
+            direction: 1,
+            guardBand: 0.05
+        ))
+        XCTAssertEqual(reverseAtEnd.target, 8.98, accuracy: 0.001)
+        XCTAssertEqual(reverseAtEnd.direction, -1)
+
+        let forwardAtStart = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
+            loops: loops,
+            time: 1.02,
+            direction: -1,
+            guardBand: 0.05
+        ))
+        XCTAssertEqual(forwardAtStart.target, 1.0, accuracy: 0.001)
+        XCTAssertEqual(forwardAtStart.direction, 1)
     }
 }
