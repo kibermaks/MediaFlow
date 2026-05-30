@@ -13,6 +13,7 @@
 - App launch should stay clean by default. The previous auto-restore behavior is now manual via File -> Open Last Closed Session; users can delete it with File -> Forget Last Closed Session, and empty sessions should not overwrite the saved last non-empty playback.
 - Icon generation rules live in `docs/ICON_GENERATION.md`; follow the SessionFlow-style cyan/violet glass Icon Composer language.
 - Video metadata loading uses modern async AVFoundation key loading; `loadVideo(url:)` should not emit SDK deprecation warnings.
+- After building, always report the exact generated app version and build number plus the app path, so the installed/running copy can be compared.
 - Generated `.app` bundles are ignored; do not commit them. Put DMG/ZIP binaries in GitHub Releases.
 - The repository has an MIT license. For public DMGs, use Developer ID signing/notarization instead of ad-hoc signing.
 - Do not change GitHub repository visibility unless the user explicitly asks for that exact step.

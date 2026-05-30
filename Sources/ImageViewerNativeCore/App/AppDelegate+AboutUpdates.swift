@@ -62,9 +62,7 @@ extension AppDelegate {
         tagline.alignment = .center
         stack.addArrangedSubview(tagline)
 
-        let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
-        let build = Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "1"
-        let versionLabel = makeDialogLabel("Version \(version) (\(build))", size: 12, weight: .regular, color: .tertiaryLabelColor)
+        let versionLabel = makeDialogLabel("Version \(AppMetadata.displayVersion)", size: 12, weight: .regular, color: .tertiaryLabelColor)
         versionLabel.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         stack.addArrangedSubview(versionLabel)
 

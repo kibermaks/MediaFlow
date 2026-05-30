@@ -41,7 +41,7 @@ struct MediaFlowWhatsNewView: View {
                 Text("What's New")
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(MediaFlowWhatsNewColors.primaryText)
-                Text("\(AppMetadata.name) v\(MediaFlowChangelogService.currentVersion)")
+                Text("\(AppMetadata.name) v\(AppMetadata.displayVersion)")
                     .font(.system(size: 13, weight: .medium, design: .rounded))
                     .foregroundStyle(MediaFlowWhatsNewColors.secondaryText)
             }

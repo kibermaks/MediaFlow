@@ -1,5 +1,5 @@
 import AppKit
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreImage
 import CoreVideo
 import ImageIO
@@ -225,20 +225,15 @@ extension MetalCollageView {
             preferredTransform: metadata.preferredTransform
         )
         let size = mapping?.displayRect.size ?? metadata.naturalSize
+        let dynamicRange = videoDynamicRange(formatDescriptions: metadata.formatDescriptions)
         let playerItem = AVPlayerItem(asset: asset)
-        let output = AVPlayerItemVideoOutput(outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf,
-            kCVPixelBufferMetalCompatibilityKey as String: true,
-            AVVideoAllowWideColorKey: true,
-            AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_Linear,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
-            ]
-        ])
+        playerItem.preferredForwardBufferDuration = 0
+        let outputSettings = Self.videoOutputSettings(for: dynamicRange)
+        let output = AVPlayerItemVideoOutput(outputSettings: outputSettings)
         output.suppressesPlayerRendering = true
         playerItem.add(output)
         let player = AVPlayer(playerItem: playerItem)
+        player.automaticallyWaitsToMinimizeStalling = false
         player.isMuted = false
         player.volume = 1
         player.actionAtItemEnd = .none
@@ -246,7 +241,7 @@ extension MetalCollageView {
         item.player = player
         item.videoOutput = output
         item.videoTextureMapping = mapping
-        item.dynamicRange = videoDynamicRange(formatDescriptions: metadata.formatDescriptions)
+        item.dynamicRange = dynamicRange
         item.muted = false
         item.volume = 1
         item.speed = 1
@@ -262,6 +257,26 @@ extension MetalCollageView {
         )
         player.play()
         return item
+    }
+
+    nonisolated private static func videoOutputSettings(for dynamicRange: MediaDynamicRange) -> [String: any Sendable] {
+        guard dynamicRange.usesEDR else {
+            return [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferMetalCompatibilityKey as String: true
+            ]
+        }
+
+        return [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            AVVideoAllowWideColorKey: true,
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_Linear,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
+            ] as [String: any Sendable]
+        ]
     }
 
     private func loadVideoMetadata(url: URL) throws -> LoadedVideoMetadata? {

@@ -55,6 +55,14 @@ Override bundle metadata only when intentionally cutting another build:
 MARKETING_VERSION="$RELEASE_VERSION" BUILD_NUMBER="$RELEASE_BUILD" ./scripts/build-native-app.sh
 ```
 
+`scripts/build-native-app.sh` increments the tracked `BUILD_NUMBER` file on every build unless `BUILD_NUMBER` is explicitly supplied. Local/non-public builds show the build number in the app UI; public release builds hide it. Linked git worktrees also get their worktree folder name embedded in the app metadata for local identification.
+
+For public release metadata that hides local build/worktree details in-app:
+
+```sh
+PUBLIC_RELEASE=true MARKETING_VERSION="$RELEASE_VERSION" ./scripts/build-native-app.sh
+```
+
 ## Run
 
 Open the generated app:

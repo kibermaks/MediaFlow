@@ -31,6 +31,35 @@ enum AppMetadata {
     static let licenseName = "MIT License"
     static let lastUpdateCheckDefaultsKey = "MediaFlow.LastUpdateCheckDate"
     static let changelogCacheDefaultsKey = "MediaFlow.CachedChangelog"
+
+    static var shortVersion: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0"
+    }
+
+    static var buildNumber: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "0"
+    }
+
+    static var isPublicReleaseBuild: Bool {
+        Bundle.main.object(forInfoDictionaryKey: "MediaFlowPublicRelease") as? Bool ?? false
+    }
+
+    static var worktreeName: String? {
+        guard let rawValue = Bundle.main.object(forInfoDictionaryKey: "MediaFlowWorktreeName") as? String else {
+            return nil
+        }
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    static var displayVersion: String {
+        guard !isPublicReleaseBuild else { return shortVersion }
+        var details = [buildNumber]
+        if let worktreeName {
+            details.append(worktreeName)
+        }
+        return "\(shortVersion) (\(details.joined(separator: " - ")))"
+    }
 }
 
 enum MediaKind {

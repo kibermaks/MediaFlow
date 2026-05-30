@@ -111,7 +111,7 @@ extension MetalCollageView {
         let target = max(0, min(item.durationSeconds, item.currentTimeSeconds + delta))
         let player = item.player
         let wasPlaying = item.isVideoPlaying
-        let rate = item.playbackRate
+        let rate = effectivePlaybackRate(for: item)
         resetVideoFrameHistory(for: item)
         player?.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in
             guard wasPlaying else { return }

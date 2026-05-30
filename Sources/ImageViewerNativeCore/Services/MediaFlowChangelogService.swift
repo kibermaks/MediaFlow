@@ -161,7 +161,7 @@ final class MediaFlowChangelogService: ObservableObject {
     }
 
     @MainActor static var currentVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0"
+        AppMetadata.shortVersion
     }
 
     nonisolated static func compareVersion(lhs: String, rhs: String) -> ComparisonResult {

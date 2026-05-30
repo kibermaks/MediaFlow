@@ -104,7 +104,7 @@ extension MetalCollageView {
         if item.playbackMode == .loop {
             item.swingDirection = 1
         }
-        item.player?.rate = item.playbackRate
+        item.player?.rate = effectivePlaybackRate(for: item)
     }
 
     @objc func speedDownSelectedVideo() {
@@ -362,7 +362,7 @@ extension MetalCollageView {
         if item.playbackMode == .loop {
             item.swingDirection = 1
         }
-        let rate = item.playbackRate
+        let rate = effectivePlaybackRate(for: item)
         resetVideoFrameHistory(for: item)
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in
             guard resumeWhenDone else { return }
@@ -371,6 +371,23 @@ extension MetalCollageView {
         if resumeWhenDone {
             player.rate = rate
         }
+    }
+
+    func effectivePlaybackRate(for item: CollageItem) -> Float {
+        let requestedRate = item.playbackRate
+        guard requestedRate < -0.001,
+              let playerItem = item.player?.currentItem,
+              playerItem.status == .readyToPlay else {
+            return requestedRate
+        }
+
+        if abs(requestedRate) > 1.001, !playerItem.canPlayFastReverse {
+            return -1
+        }
+        if !playerItem.canPlayReverse, playerItem.canPlaySlowReverse {
+            return max(requestedRate, -0.5)
+        }
+        return requestedRate
     }
 
     func syncSwingDirectionFromPlayer(for item: CollageItem) {

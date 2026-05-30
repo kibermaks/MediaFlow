@@ -10,7 +10,8 @@ PRODUCT="ImageViewerNative"
 EXEC="$ROOT/.build/release/$PRODUCT"
 APP_ICON="$ROOT/Assets/AppIcon.icns"
 MARKETING_VERSION="${MARKETING_VERSION:-0.4}"
-BUILD_NUMBER="${BUILD_NUMBER:-1}"
+BUILD_NUMBER_FILE="${BUILD_NUMBER_FILE:-$ROOT/BUILD_NUMBER}"
+PUBLIC_RELEASE="${PUBLIC_RELEASE:-false}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 BUILD_HOME="$ROOT/.build/home"
@@ -20,6 +21,59 @@ CLANG_CACHE="$ROOT/.build/clang-module-cache"
 
 cd "$ROOT"
 mkdir -p "$BUILD_HOME" "$SWIFTPM_CACHE" "$SWIFTPM_CONFIG" "$CLANG_CACHE"
+
+case "$PUBLIC_RELEASE" in
+  1|true|TRUE|yes|YES) PUBLIC_RELEASE="true" ;;
+  *) PUBLIC_RELEASE="false" ;;
+esac
+
+if [[ -n "${BUILD_NUMBER:-}" ]]; then
+  RESOLVED_BUILD_NUMBER="$BUILD_NUMBER"
+else
+  CURRENT_BUILD_NUMBER="1"
+  if [[ -f "$BUILD_NUMBER_FILE" ]]; then
+    CURRENT_BUILD_NUMBER="$(tr -d '[:space:]' < "$BUILD_NUMBER_FILE")"
+  fi
+  if [[ ! "$CURRENT_BUILD_NUMBER" =~ ^[0-9]+$ ]]; then
+    CURRENT_BUILD_NUMBER="1"
+  fi
+  RESOLVED_BUILD_NUMBER=$((CURRENT_BUILD_NUMBER + 1))
+  printf "%s\n" "$RESOLVED_BUILD_NUMBER" > "$BUILD_NUMBER_FILE"
+fi
+BUILD_NUMBER="$RESOLVED_BUILD_NUMBER"
+
+xml_escape() {
+  local value="$1"
+  value="${value//&/&amp;}"
+  value="${value//</&lt;}"
+  value="${value//>/&gt;}"
+  value="${value//\"/&quot;}"
+  value="${value//\'/&apos;}"
+  printf "%s" "$value"
+}
+
+detect_worktree_name() {
+  local git_dir common_dir top_level
+  git_dir="$(git rev-parse --path-format=absolute --git-dir 2>/dev/null || true)"
+  common_dir="$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+  top_level="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+  if [[ -n "$git_dir" && -n "$common_dir" && "$git_dir" != "$common_dir" && -n "$top_level" ]]; then
+    basename "$top_level"
+  fi
+}
+
+WORKTREE_NAME="${WORKTREE_NAME:-$(detect_worktree_name)}"
+ESCAPED_MARKETING_VERSION="$(xml_escape "$MARKETING_VERSION")"
+ESCAPED_BUILD_NUMBER="$(xml_escape "$BUILD_NUMBER")"
+ESCAPED_WORKTREE_NAME="$(xml_escape "$WORKTREE_NAME")"
+
+echo "Building $APP_NAME $MARKETING_VERSION ($BUILD_NUMBER)"
+if [[ -n "$WORKTREE_NAME" ]]; then
+  echo "Worktree: $WORKTREE_NAME"
+fi
+if [[ "$PUBLIC_RELEASE" == "true" ]]; then
+  echo "Public release metadata: build/worktree hidden in app UI"
+fi
 
 HOME="$BUILD_HOME" \
 CLANG_MODULE_CACHE_PATH="$CLANG_CACHE" \
@@ -104,9 +158,13 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>$MARKETING_VERSION</string>
+  <string>$ESCAPED_MARKETING_VERSION</string>
   <key>CFBundleVersion</key>
-  <string>$BUILD_NUMBER</string>
+  <string>$ESCAPED_BUILD_NUMBER</string>
+  <key>MediaFlowPublicRelease</key>
+  <$PUBLIC_RELEASE/>
+  <key>MediaFlowWorktreeName</key>
+  <string>$ESCAPED_WORKTREE_NAME</string>
   <key>LSMinimumSystemVersion</key>
   <string>14.0</string>
   <key>NSHighResolutionCapable</key>
