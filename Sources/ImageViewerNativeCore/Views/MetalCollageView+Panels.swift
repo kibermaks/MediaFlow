@@ -33,6 +33,8 @@ extension MetalCollageView {
         addToolButton(symbol: "plus.magnifyingglass", fallbackTitle: "+", tooltip: "Zoom in", #selector(zoomInHoveredItem))
         addToolButton(symbol: "minus.magnifyingglass", fallbackTitle: "-", tooltip: "Zoom out", #selector(zoomOutHoveredItem))
         addToolButton(symbol: "hand.draw", fallbackTitle: "P", tooltip: "Pan visible content", #selector(panHoveredItem))
+        addToolButton(symbol: "rotate.left", fallbackTitle: "L", tooltip: "Rotate item left", #selector(rotateHoveredItemLeft))
+        addToolButton(symbol: "rotate.right", fallbackTitle: "R", tooltip: "Rotate item right", #selector(rotateHoveredItemRight))
 
         addSubview(toolPanel)
     }
@@ -53,6 +55,11 @@ extension MetalCollageView {
         playButton.target = self
         playButton.action = #selector(toggleSelectedVideoPlayback)
         videoStack.addArrangedSubview(playButton)
+
+        configureVideoIconButton(playbackModeButton, symbol: "repeat", fallbackTitle: "Loop", tooltip: "Toggle Loop or Swing playback", iconPointSize: 16)
+        playbackModeButton.target = self
+        playbackModeButton.action = #selector(toggleSelectedVideoPlaybackMode)
+        videoStack.addArrangedSubview(playbackModeButton)
 
         configureVideoIconButton(muteButton, symbol: "speaker.wave.2.fill", fallbackTitle: "Mute", tooltip: "Mute or unmute this video")
         muteButton.target = self
@@ -245,12 +252,12 @@ extension MetalCollageView {
 
     @objc func savePlaybackFromPanel() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "collage.ivplayback"
-        panel.allowedContentTypes = [UTType(filenameExtension: "ivplayback") ?? .json]
+        panel.nameFieldStringValue = "collage"
+        panel.allowedContentTypes = [AppMetadata.playbackPanelContentType]
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
             do {
-                try self.savePlayback(to: url, addToRecents: true)
+                try self.savePlayback(to: PlaybackFile.normalizedSaveURL(url), addToRecents: true)
             } catch {
                 // savePlayback shows the user-facing alert for manual saves.
             }
@@ -261,7 +268,7 @@ extension MetalCollageView {
         let panel = NSOpenPanel()
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [UTType(filenameExtension: "ivplayback") ?? .json]
+        panel.allowedContentTypes = [AppMetadata.playbackPanelContentType]
         panel.begin { [weak self] response in
             guard let self, response == .OK, let url = panel.url else { return }
             self.loadPlayback(from: url, addToRecents: true)

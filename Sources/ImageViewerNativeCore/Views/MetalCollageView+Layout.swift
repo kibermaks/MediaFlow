@@ -82,7 +82,7 @@ extension MetalCollageView {
         for item in items where item.kind == .video {
             if visibleIDs.contains(item.id) {
                 if item.playWhenVisible && !isPaused && !item.isVideoPlaying {
-                    item.player?.rate = item.speed
+                    resumePlayback(for: item)
                 }
             } else if item.isVideoPlaying {
                 item.player?.pause()
@@ -111,14 +111,14 @@ extension MetalCollageView {
         let target = max(0, min(item.durationSeconds, item.currentTimeSeconds + delta))
         let player = item.player
         let wasPlaying = item.isVideoPlaying
-        let speed = item.speed
+        let rate = item.playbackRate
         resetVideoFrameHistory(for: item)
         player?.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in
             guard wasPlaying else { return }
-            player?.rate = speed
+            player?.rate = rate
         }
         if wasPlaying {
-            player?.rate = speed
+            resumePlayback(for: item)
         }
         selectOnly(item)
     }

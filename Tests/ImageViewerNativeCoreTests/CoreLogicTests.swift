@@ -36,4 +36,27 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(uv.x, 0.25, accuracy: 0.001)
         XCTAssertEqual(uv.y, 0.75, accuracy: 0.001)
     }
+
+    func testPlaybackSaveURLNormalizesExtension() {
+        let duplicate = URL(fileURLWithPath: "/tmp/collage.ivplayback.ivplayback")
+        XCTAssertEqual(PlaybackFile.normalizedSaveURL(duplicate).lastPathComponent, "collage.ivplayback")
+
+        let missing = URL(fileURLWithPath: "/tmp/collage")
+        XCTAssertEqual(PlaybackFile.normalizedSaveURL(missing).lastPathComponent, "collage.ivplayback")
+    }
+
+    func testItemRotationSwapsVisibleAspect() {
+        let item = CollageItem(
+            url: URL(fileURLWithPath: "/tmp/example.jpg"),
+            kind: .image,
+            pixelSize: CGSize(width: 100, height: 50),
+            texture: nil
+        )
+
+        XCTAssertEqual(item.visibleAspect, 2, accuracy: 0.001)
+        item.rotationQuarterTurns = 1
+        XCTAssertEqual(item.visibleAspect, 0.5, accuracy: 0.001)
+        item.rotationQuarterTurns = -1
+        XCTAssertEqual(item.rotationQuarterTurns, 3)
+    }
 }

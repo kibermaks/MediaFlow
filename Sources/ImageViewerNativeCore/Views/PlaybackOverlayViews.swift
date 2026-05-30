@@ -130,6 +130,9 @@ final class OverlayView: NSView {
         if !item.isVideoPlaying {
             labels.append(("Pause", .secondaryLabelColor))
         }
+        if item.playbackMode == .swing {
+            labels.append((item.playbackMode.badgeName, .systemPurple))
+        }
         if solo {
             labels.append(("Solo", .systemTeal))
         }

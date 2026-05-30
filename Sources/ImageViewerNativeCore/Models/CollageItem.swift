@@ -55,6 +55,8 @@ final class CollageItem: Equatable, @unchecked Sendable {
     var volume: Float = 1
     var muted = false
     var playWhenVisible = true
+    var playbackMode: VideoPlaybackMode = .loop
+    var swingDirection: Float = 1
     var frozenPlayWhenVisible: Bool?
 
     var cellRect: CGRect = .zero
@@ -63,6 +65,14 @@ final class CollageItem: Equatable, @unchecked Sendable {
     var weight: CGFloat = 1
     var zoom: CGFloat = 1
     var pan: CGPoint = .zero
+    var rotationQuarterTurns: Int = 0 {
+        didSet {
+            let normalized = Self.normalizedRotationQuarterTurns(rotationQuarterTurns)
+            if rotationQuarterTurns != normalized {
+                rotationQuarterTurns = normalized
+            }
+        }
+    }
     var selected = false
 
     init(url: URL, kind: MediaKind, pixelSize: CGSize, texture: MTLTexture?) {
@@ -91,8 +101,12 @@ final class CollageItem: Equatable, @unchecked Sendable {
         return max(0.08, (cropRect.width * pixelSize.width) / max(1, cropRect.height * pixelSize.height))
     }
 
-    var visibleAspect: CGFloat {
+    var sourceVisibleAspect: CGFloat {
         cropAspect ?? naturalAspect
+    }
+
+    var visibleAspect: CGFloat {
+        displayAspect(forSourceAspect: sourceVisibleAspect)
     }
 
     var packingAspect: CGFloat {
@@ -114,7 +128,73 @@ final class CollageItem: Equatable, @unchecked Sendable {
 
     var isVideoPlaying: Bool {
         guard kind == .video, let player else { return false }
-        return player.rate > 0.001 || player.timeControlStatus == .playing
+        return abs(player.rate) > 0.001 || player.timeControlStatus == .playing
+    }
+
+    var normalizedRotationQuarterTurns: Int {
+        Self.normalizedRotationQuarterTurns(rotationQuarterTurns)
+    }
+
+    var isSideways: Bool {
+        normalizedRotationQuarterTurns % 2 != 0
+    }
+
+    var playbackRate: Float {
+        speed * (playbackMode == .swing ? normalizedSwingDirection : 1)
+    }
+
+    var normalizedSwingDirection: Float {
+        swingDirection < 0 ? -1 : 1
+    }
+
+    static func normalizedRotationQuarterTurns(_ turns: Int) -> Int {
+        let remainder = turns % 4
+        return remainder >= 0 ? remainder : remainder + 4
+    }
+
+    func displayAspect(forSourceAspect sourceAspect: CGFloat) -> CGFloat {
+        let safeAspect = max(0.08, sourceAspect)
+        return isSideways ? max(0.08, 1 / safeAspect) : safeAspect
+    }
+
+    func sourceAspect(forDisplayAspect displayAspect: CGFloat) -> CGFloat {
+        let safeAspect = max(0.08, displayAspect)
+        return isSideways ? max(0.08, 1 / safeAspect) : safeAspect
+    }
+
+    func sourcePoint(fromDisplayNormalizedPoint point: CGPoint) -> CGPoint {
+        let x = max(0, min(1, point.x))
+        let y = max(0, min(1, point.y))
+        switch normalizedRotationQuarterTurns {
+        case 1:
+            return CGPoint(x: y, y: 1 - x)
+        case 2:
+            return CGPoint(x: 1 - x, y: 1 - y)
+        case 3:
+            return CGPoint(x: 1 - y, y: x)
+        default:
+            return CGPoint(x: x, y: y)
+        }
+    }
+
+    func sourceRect(fromDisplayNormalizedRect rect: CGRect) -> CGRect {
+        let standardized = rect.standardized
+        let corners = [
+            CGPoint(x: standardized.minX, y: standardized.minY),
+            CGPoint(x: standardized.maxX, y: standardized.minY),
+            CGPoint(x: standardized.minX, y: standardized.maxY),
+            CGPoint(x: standardized.maxX, y: standardized.maxY)
+        ].map(sourcePoint(fromDisplayNormalizedPoint:))
+        let minX = max(0, min(1, corners.map(\.x).min() ?? 0))
+        let maxX = max(0, min(1, corners.map(\.x).max() ?? 1))
+        let minY = max(0, min(1, corners.map(\.y).min() ?? 0))
+        let maxY = max(0, min(1, corners.map(\.y).max() ?? 1))
+        return CGRect(
+            x: minX,
+            y: minY,
+            width: max(0.01, maxX - minX),
+            height: max(0.01, maxY - minY)
+        )
     }
 }
 

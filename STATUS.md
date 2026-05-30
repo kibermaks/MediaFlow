@@ -22,7 +22,7 @@ Last updated: 2026-05-28.
 - Selected video bottom panel: icon buttons for play/pause, mute, solo, granular speed, time scrubber, clearer visual A-B segments, Set A, Set B, Clear A-B.
 - Metal Quality diagnostic selector: Best, Linear, Nearest, Bicubic, and Lanczos 2.
 - Optional Natural Denoise + Detail mode uses an edge-aware Metal denoise pass for noisy low-light images and videos.
-- Native `.ivplayback` save/load stores encrypted file paths plus crop, pan, zoom, weights, volume, mute/speed, and A-B loops.
+- Native `.ivplayback` save/load stores encrypted file paths plus crop, pan, zoom, rotation, weights, video Loop/Swing mode, volume, mute/speed, and A-B loops.
 - `Q` quits immediately; physical key handling keeps hotkeys working across keyboard layouts.
 
 ### Ingest & layout
@@ -48,6 +48,7 @@ Last updated: 2026-05-28.
 ### Manual layout
 - Shift-drag-to-reorder: drag any item over another while holding `Shift`; drop inserts before the target.
 - Enlarge/Reduce are available from hover controls, the Item menu, and `+` / `-`.
+- Rotate Left/Right are available from hover controls, the Item menu, and `[` / `]`.
 - Item weight is saved so proportions survive relayouts and layout files.
 
 ### Zone (crop to drawn aspect)
@@ -58,6 +59,7 @@ Last updated: 2026-05-28.
 
 ### Videos
 - Loop by default, sound enabled by default, autoplay on load.
+- Per-video mode toggles between Loop and Swing back-and-forth playback.
 - Per-video Pause / Play
 - Per-video mute, temporary solo, and volume slider
 - Speed `−` / `+` in 0.05× steps, clamped to 0.1×–8×
@@ -71,7 +73,7 @@ Last updated: 2026-05-28.
 
 ### Save / Load (`.ivplayback`)
 - Encrypted playback file references local media by path.
-- Stores per-item weight, crop, zoom, pan, video speed, volume, mute state, A-B loops, and Flow Library rotation settings.
+- Stores per-item weight, crop, zoom, pan, rotation, video Loop/Swing mode, speed, volume, mute state, A-B loops, and Flow Library rotation settings.
 - Load rebuilds the scene from files that still exist at those paths.
 - Saved and opened playbacks are added to File -> Recent Playbacks.
 - The app opens to a clean canvas by default.

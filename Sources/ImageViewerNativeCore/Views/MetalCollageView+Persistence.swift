@@ -58,9 +58,12 @@ extension MetalCollageView {
                     panX: item.pan.x,
                     panY: item.pan.y,
                     crop: item.cropRect,
+                    rotationQuarterTurns: item.rotationQuarterTurns,
                     speed: item.speed,
                     volume: item.volume,
                     muted: item.muted,
+                    playbackMode: item.kind == .video ? item.playbackMode : nil,
+                    swingDirection: item.kind == .video ? item.normalizedSwingDirection : nil,
                     currentTime: item.kind == .video ? item.currentTimeSeconds : nil,
                     playing: item.kind == .video ? item.playWhenVisible : nil,
                     abLoops: item.abLoops.map { SavedLoop(a: $0.a, b: $0.b) }
@@ -104,9 +107,12 @@ extension MetalCollageView {
                 item.zoom = max(1, saved.zoom)
                 item.pan = CGPoint(x: saved.panX, y: saved.panY)
                 item.cropRect = saved.crop
+                item.rotationQuarterTurns = saved.rotationQuarterTurns ?? 0
                 item.speed = saved.speed
                 item.volume = max(0, min(1, saved.volume ?? 1))
                 item.muted = saved.muted
+                item.playbackMode = saved.playbackMode ?? .loop
+                item.swingDirection = (saved.swingDirection ?? 1) < 0 ? -1 : 1
                 item.abLoops = saved.abLoops.map { ($0.a, $0.b) }
                 applyAudioState(for: item)
                 if let seconds = saved.currentTime, seconds.isFinite, seconds > 0 {
@@ -115,7 +121,7 @@ extension MetalCollageView {
                 }
                 item.playWhenVisible = saved.playing ?? true
                 if item.playWhenVisible {
-                    item.player?.rate = saved.speed
+                    resumePlayback(for: item)
                 } else {
                     item.player?.pause()
                 }

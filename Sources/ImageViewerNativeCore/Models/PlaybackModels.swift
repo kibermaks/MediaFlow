@@ -33,12 +33,33 @@ struct SavedItem: Codable {
     var panX: CGFloat
     var panY: CGFloat
     var crop: CGRect?
+    var rotationQuarterTurns: Int?
     var speed: Float
     var volume: Float?
     var muted: Bool
+    var playbackMode: VideoPlaybackMode?
+    var swingDirection: Float?
     var currentTime: Double?
     var playing: Bool?
     var abLoops: [SavedLoop]
+}
+
+enum PlaybackFile {
+    static func isPlaybackURL(_ url: URL) -> Bool {
+        url.pathExtension.caseInsensitiveCompare(AppMetadata.playbackFileExtension) == .orderedSame
+    }
+
+    static func normalizedSaveURL(_ url: URL) -> URL {
+        var normalized = url
+        while isPlaybackURL(normalized),
+              normalized.deletingPathExtension().pathExtension.caseInsensitiveCompare(AppMetadata.playbackFileExtension) == .orderedSame {
+            normalized = normalized.deletingPathExtension()
+        }
+        if !isPlaybackURL(normalized) {
+            normalized = normalized.appendingPathExtension(AppMetadata.playbackFileExtension)
+        }
+        return normalized
+    }
 }
 
 struct SavedLoop: Codable, Equatable {
