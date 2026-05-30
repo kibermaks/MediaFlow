@@ -2,6 +2,18 @@
 
 All notable MediaFlow changes are tracked here. Keep the newest release first and attach the matching DMG to the GitHub Release for self-updates.
 
+## [0.5] - 2026-05-30
+
+### Added
+- Draggable A-B markers on the video timeline with live preview while adjusting loop points.
+- Rotate 180 controls in the hover tools and Item menu.
+- Local build metadata for non-release builds, including build number and linked worktree name when present.
+
+### Changed
+- What's New now uses the bundled changelog parser and a styled versioned layout.
+- Video output uses lighter SDR buffers while preserving HDR/EDR buffers for wide-range material.
+- Removed reverse Swing playback mode so videos and A-B segments stay in smooth forward Loop playback.
+
 ## [0.4] - 2026-05-30
 
 ### Added
@@ -15,7 +27,6 @@ All notable MediaFlow changes are tracked here. Keep the newest release first an
 - Speed changes, seeks, loop jumps, and scrubbing reset temporal frame history to avoid stale-frame artifacts.
 - Quality Controls now uses compact custom switches, segmented sampling controls, and custom sliders.
 - A-B controls now act on the selected video without unexpectedly changing selection.
-- Removed reverse Swing playback mode so videos and A-B segments stay in smooth forward Loop playback.
 
 ## [0.3] - 2026-05-29
 
