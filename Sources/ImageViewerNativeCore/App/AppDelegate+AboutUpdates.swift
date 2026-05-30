@@ -12,6 +12,7 @@ import Darwin
 import Security
 import simd
 import UniformTypeIdentifiers
+import SwiftUI
 
 extension AppDelegate {
     @MainActor @objc func showAboutWindow() {
@@ -102,17 +103,10 @@ extension AppDelegate {
         if changelogWindow == nil {
             changelogWindow = makeChangelogWindow()
         }
-        changelogTextView?.string = MediaFlowChangelogService.shared.loadBundledOrCachedMarkdown()
+        MediaFlowChangelogService.shared.fetchIfNeeded()
         changelogWindow?.center()
         changelogWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-
-        Task { [weak self] in
-            guard let markdown = await MediaFlowChangelogService.shared.fetchRemoteMarkdown() else { return }
-            await MainActor.run {
-                self?.changelogTextView?.string = markdown
-            }
-        }
     }
 
     @MainActor func makeChangelogWindow() -> NSWindow {
@@ -123,51 +117,28 @@ extension AppDelegate {
             defer: false
         )
         panel.title = "What's New"
+        panel.titleVisibility = .hidden
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
         panel.titlebarAppearsTransparent = true
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.minSize = NSSize(width: 500, height: 430)
         panel.isReleasedWhenClosed = false
+        panel.isMovableByWindowBackground = true
 
-        let content = NSView()
-        content.wantsLayer = true
-        content.layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-        panel.contentView = content
-
-        let title = makeDialogLabel("What's New in \(AppMetadata.name)", size: 18, weight: .semibold, color: .labelColor)
-        title.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(title)
-
-        let textView = NSTextView()
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        textView.textColor = .labelColor
-        textView.backgroundColor = .textBackgroundColor
-        textView.textContainerInset = NSSize(width: 14, height: 14)
-        textView.string = MediaFlowChangelogService.shared.loadBundledOrCachedMarkdown()
-        changelogTextView = textView
-
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = true
-        scrollView.borderType = .bezelBorder
-        scrollView.documentView = textView
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(scrollView)
-
-        let openGitHub = NSButton(title: "Open on GitHub", target: self, action: #selector(openButtonURL(_:)))
         let changelogURL = URL(string: "\(AppMetadata.repositoryURL.absoluteString)/blob/main/CHANGELOG.md") ?? AppMetadata.repositoryURL
-        openGitHub.identifier = NSUserInterfaceItemIdentifier(changelogURL.absoluteString)
-        openGitHub.translatesAutoresizingMaskIntoConstraints = false
-        content.addSubview(openGitHub)
-
-        NSLayoutConstraint.activate([
-            title.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-            title.topAnchor.constraint(equalTo: content.topAnchor, constant: 22),
-            openGitHub.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
-            openGitHub.centerYAnchor.constraint(equalTo: title.centerYAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 24),
-            scrollView.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -24),
-            scrollView.topAnchor.constraint(equalTo: title.bottomAnchor, constant: 18),
-            scrollView.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -24)
-        ])
+        let view = MediaFlowWhatsNewView(
+            changelog: MediaFlowChangelogService.shared,
+            onClose: { [weak panel] in panel?.orderOut(nil) },
+            onOpenGitHub: { NSWorkspace.shared.open(changelogURL) }
+        )
+        let hostingView = NSHostingView(rootView: view)
+        hostingView.frame = panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 680, height: 560)
+        hostingView.autoresizingMask = [.width, .height]
+        panel.contentView = hostingView
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
 
         return panel
     }

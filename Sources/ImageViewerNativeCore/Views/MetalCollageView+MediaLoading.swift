@@ -13,6 +13,31 @@ import Security
 import simd
 import UniformTypeIdentifiers
 
+private struct LoadedVideoMetadata: @unchecked Sendable {
+    let naturalSize: CGSize
+    let preferredTransform: CGAffineTransform
+    let nominalFrameRate: Float
+    let formatDescriptions: [CMFormatDescription]
+}
+
+private final class VideoMetadataResultBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var result: Result<LoadedVideoMetadata?, Error>?
+
+    func complete(_ result: Result<LoadedVideoMetadata?, Error>) {
+        lock.lock()
+        self.result = result
+        lock.unlock()
+    }
+
+    func snapshot() -> Result<LoadedVideoMetadata?, Error>? {
+        lock.lock()
+        let result = result
+        lock.unlock()
+        return result
+    }
+}
+
 extension MetalCollageView {
     func addMediaURLs(_ urls: [URL]) {
         loadMedia(urls: urls)
@@ -185,10 +210,21 @@ extension MetalCollageView {
     }
 
     func loadVideo(url: URL) -> CollageItem? {
+        let metadata: LoadedVideoMetadata
+        do {
+            guard let loadedMetadata = try loadVideoMetadata(url: url) else { return nil }
+            metadata = loadedMetadata
+        } catch {
+            NSLog("Video metadata failed for \(url.path): \(error)")
+            return nil
+        }
+
         let asset = AVURLAsset(url: url)
-        guard let track = asset.tracks(withMediaType: .video).first else { return nil }
-        let mapping = VideoTextureMapping.make(encodedSize: track.naturalSize, preferredTransform: track.preferredTransform)
-        let size = mapping?.displayRect.size ?? track.naturalSize
+        let mapping = VideoTextureMapping.make(
+            encodedSize: metadata.naturalSize,
+            preferredTransform: metadata.preferredTransform
+        )
+        let size = mapping?.displayRect.size ?? metadata.naturalSize
         let playerItem = AVPlayerItem(asset: asset)
         let output = AVPlayerItemVideoOutput(outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf,
@@ -210,12 +246,12 @@ extension MetalCollageView {
         item.player = player
         item.videoOutput = output
         item.videoTextureMapping = mapping
-        item.dynamicRange = videoDynamicRange(for: track)
+        item.dynamicRange = videoDynamicRange(formatDescriptions: metadata.formatDescriptions)
         item.muted = false
         item.volume = 1
         item.speed = 1
-        if track.nominalFrameRate > 0 {
-            item.videoNominalFrameDuration = 1.0 / TimeInterval(track.nominalFrameRate)
+        if metadata.nominalFrameRate > 0 {
+            item.videoNominalFrameDuration = 1.0 / TimeInterval(metadata.nominalFrameRate)
             item.videoObservedFrameInterval = item.videoNominalFrameDuration
         }
         NotificationCenter.default.addObserver(
@@ -228,11 +264,41 @@ extension MetalCollageView {
         return item
     }
 
-    func videoDynamicRange(for track: AVAssetTrack) -> MediaDynamicRange {
+    private func loadVideoMetadata(url: URL) throws -> LoadedVideoMetadata? {
+        let semaphore = DispatchSemaphore(value: 0)
+        let resultBox = VideoMetadataResultBox()
+        Task.detached(priority: .userInitiated) {
+            defer { semaphore.signal() }
+            do {
+                let asset = AVURLAsset(url: url)
+                guard let track = try await asset.loadTracks(withMediaType: .video).first else {
+                    resultBox.complete(.success(nil))
+                    return
+                }
+
+                let naturalSize = try await track.load(.naturalSize)
+                let preferredTransform = try await track.load(.preferredTransform)
+                let nominalFrameRate = try await track.load(.nominalFrameRate)
+                let formatDescriptions = try await track.load(.formatDescriptions)
+                let metadata = LoadedVideoMetadata(
+                    naturalSize: naturalSize,
+                    preferredTransform: preferredTransform,
+                    nominalFrameRate: nominalFrameRate,
+                    formatDescriptions: formatDescriptions
+                )
+                resultBox.complete(.success(metadata))
+            } catch {
+                resultBox.complete(.failure(error))
+            }
+        }
+        semaphore.wait()
+        return try resultBox.snapshot()?.get()
+    }
+
+    func videoDynamicRange(formatDescriptions: [CMFormatDescription]) -> MediaDynamicRange {
         var fallback: MediaDynamicRange = .standard
-        for formatDescription in track.formatDescriptions {
-            let format = formatDescription as! CMFormatDescription
-            guard let extensions = CMFormatDescriptionGetExtensions(format) as? [CFString: Any] else { continue }
+        for formatDescription in formatDescriptions {
+            guard let extensions = CMFormatDescriptionGetExtensions(formatDescription) as? [CFString: Any] else { continue }
             let transfer = String(describing: extensions[kCMFormatDescriptionExtension_TransferFunction] ?? "").lowercased()
             let primaries = String(describing: extensions[kCMFormatDescriptionExtension_ColorPrimaries] ?? "").lowercased()
             let matrix = String(describing: extensions[kCMFormatDescriptionExtension_YCbCrMatrix] ?? "").lowercased()

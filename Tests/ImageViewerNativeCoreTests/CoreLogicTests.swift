@@ -45,6 +45,44 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(PlaybackFile.normalizedSaveURL(missing).lastPathComponent, "collage.ivplayback")
     }
 
+    func testChangelogParserBuildsVersionedSections() {
+        let markdown = """
+        # Changelog
+
+        ## [0.4] - 2026-05-30
+
+        ### Added
+        - Debug Information overlay.
+        - Photos import browser.
+
+        ### Changed
+        - Quality Controls now uses compact switches.
+
+        ## [0.3] - 2026-05-29
+
+        ### Fixed
+        - Bundled changelog loading.
+        """
+
+        let entries = MediaFlowChangelogService.parse(markdown)
+
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(entries[0].version, "0.4")
+        XCTAssertEqual(entries[0].date, "2026-05-30")
+        XCTAssertEqual(entries[0].sections.count, 2)
+        XCTAssertEqual(entries[0].sections[0].category, "Added")
+        XCTAssertEqual(entries[0].sections[0].items, ["Debug Information overlay.", "Photos import browser."])
+        XCTAssertEqual(entries[0].sections[1].category, "Changed")
+        XCTAssertEqual(entries[1].version, "0.3")
+        XCTAssertEqual(entries[1].sections[0].category, "Fixed")
+    }
+
+    func testChangelogVersionComparisonUsesNumericComponents() {
+        XCTAssertEqual(MediaFlowChangelogService.compareVersion(lhs: "0.10", rhs: "0.9"), .orderedDescending)
+        XCTAssertEqual(MediaFlowChangelogService.compareVersion(lhs: "1.0.0", rhs: "1"), .orderedSame)
+        XCTAssertEqual(MediaFlowChangelogService.compareVersion(lhs: "0.4", rhs: "0.4.1"), .orderedAscending)
+    }
+
     func testItemRotationSwapsVisibleAspect() {
         let item = CollageItem(
             url: URL(fileURLWithPath: "/tmp/example.jpg"),

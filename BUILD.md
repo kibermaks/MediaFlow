@@ -139,7 +139,7 @@ Expected command:
 ./scripts/build-native-app.sh
 ```
 
-Expected warning today: synchronous AVFoundation metadata APIs in `loadVideo(url:)` may produce SDK deprecation warnings. That warning is tracked in `STATUS.md` and does not block the release build.
+Expected result: release builds complete without AVFoundation deprecation warnings. Sandboxed automation may still print a SwiftPM user-level cache warning before the build starts; that warning is environmental and not from project source.
 
 Useful checks:
 

@@ -1,6 +1,6 @@
 # Status
 
-Last updated: 2026-05-28.
+Last updated: 2026-05-30.
 
 ## Done
 
@@ -63,6 +63,7 @@ Last updated: 2026-05-28.
 - Per-video Pause / Play
 - Per-video mute, temporary solo, and volume slider
 - Speed `−` / `+` in 0.05× steps, clamped to 0.1×–8×
+- Video metadata loading uses async AVFoundation APIs for tracks, dimensions, transforms, frame rate, and dynamic-range format descriptions.
 - Playback below 1× can use separately toggled Metal temporal frame blending to soften frame stepping; the toggle is saved between launches.
 - Natural Denoise + Detail can be toggled from the View menu and is saved between launches.
 - A-B clips: Set A and Set B immediately add an active clip once both points exist; additional A/B pairs append more clips.
@@ -100,12 +101,10 @@ Last updated: 2026-05-28.
 - **Layout can still repack.** The optimizer prioritizes filling the canvas, so adding/removing items can rearrange cells.
 - **Playback files reference encrypted paths.** If source media is moved or deleted, that item cannot be restored from `.ivplayback`.
 - **Embedded-key encryption is obfuscation against casual inspection.** It prevents plain JSON on disk, but anyone reversing the app can recover the bundled key.
-- **Video metadata loading uses synchronous AVFoundation APIs.** It builds and runs, but Swift may warn about newer SDK deprecations.
 - **Release artifacts must be Developer ID signed, notarized, and stapled before publication.** The scripts support that path for both the app and DMG.
 - **Repository visibility remains unchanged.** Preparation is done for release hygiene, but GitHub visibility has not been changed.
 
 ## Open / nice-to-have
 
 - Optional "lock rows" mode so adding items doesn't repartition rows
-- Async AVFoundation metadata loading path
 - Optional smart auto-arrangement passes (color clustering, duration grouping, etc.)

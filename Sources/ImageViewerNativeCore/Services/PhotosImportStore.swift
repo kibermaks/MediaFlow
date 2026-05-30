@@ -149,11 +149,9 @@ enum PhotosImportStore {
                     if FileManager.default.fileExists(atPath: destination.path) {
                         try FileManager.default.removeItem(at: destination)
                     }
-                    let presets = AVAssetExportSession.exportPresets(compatibleWith: assetBox.value)
-                    let preset = presets.contains(AVAssetExportPresetPassthrough)
-                        ? AVAssetExportPresetPassthrough
-                        : AVAssetExportPresetHighestQuality
-                    guard let export = AVAssetExportSession(asset: assetBox.value, presetName: preset) else {
+                    let export = AVAssetExportSession(asset: assetBox.value, presetName: AVAssetExportPresetPassthrough)
+                        ?? AVAssetExportSession(asset: assetBox.value, presetName: AVAssetExportPresetHighestQuality)
+                    guard let export else {
                         completion(nil)
                         return
                     }

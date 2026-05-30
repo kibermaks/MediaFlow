@@ -12,7 +12,7 @@
 - Finder Open With support requires both generated `CFBundleDocumentTypes` and AppDelegate open-file/open-URL handlers.
 - App launch should stay clean by default. The previous auto-restore behavior is now manual via File -> Open Last Closed Session; users can delete it with File -> Forget Last Closed Session, and empty sessions should not overwrite the saved last non-empty playback.
 - Icon generation rules live in `docs/ICON_GENERATION.md`; follow the SessionFlow-style cyan/violet glass Icon Composer language.
-- SwiftPM builds may warn about AVFoundation metadata deprecations in `loadVideo(url:)`; that is a known warning, not a release blocker.
+- Video metadata loading uses modern async AVFoundation key loading; `loadVideo(url:)` should not emit SDK deprecation warnings.
 - Generated `.app` bundles are ignored; do not commit them. Put DMG/ZIP binaries in GitHub Releases.
 - The repository has an MIT license. For public DMGs, use Developer ID signing/notarization instead of ad-hoc signing.
 - Do not change GitHub repository visibility unless the user explicitly asks for that exact step.

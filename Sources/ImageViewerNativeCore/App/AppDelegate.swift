@@ -56,7 +56,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     var checkForUpdatesMenuItem: NSMenuItem?
     var aboutWindow: NSWindow?
     var changelogWindow: NSWindow?
-    var changelogTextView: NSTextView?
     var installStatusPanel: NSPanel?
     var installStatusLabel: NSTextField?
     let recentMenu = NSMenu(title: "Recent Playbacks")
