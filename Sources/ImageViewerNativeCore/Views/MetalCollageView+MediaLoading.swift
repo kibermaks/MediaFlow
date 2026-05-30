@@ -334,17 +334,7 @@ extension MetalCollageView {
     @objc func videoItemDidPlayToEnd(_ notification: Notification) {
         guard let playerItem = notification.object as? AVPlayerItem,
               let item = items.first(where: { $0.player?.currentItem === playerItem }) else { return }
-        if item.playbackMode == .swing {
-            let duration = item.durationSeconds
-            seekPlaybackPlayer(
-                item,
-                to: max(0, duration - 0.02),
-                direction: -1,
-                resumeWhenDone: item.playWhenVisible
-            )
-        } else {
-            seekPlaybackPlayer(item, to: 0, direction: 1, resumeWhenDone: item.playWhenVisible)
-        }
+        seekPlaybackPlayer(item, to: 0, resumeWhenDone: item.playWhenVisible)
     }
 
 }

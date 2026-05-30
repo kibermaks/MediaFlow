@@ -100,47 +100,7 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(item.rotationQuarterTurns, 1)
     }
 
-    func testSwingPlannerWalksMultipleABLoopsBackAndForth() throws {
-        let loops = [(a: 1.0, b: 2.0), (a: 4.0, b: 5.0), (a: 8.0, b: 9.0)]
-
-        let forwardToNext = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
-            loops: loops,
-            time: 1.96,
-            direction: 1,
-            guardBand: 0.05
-        ))
-        XCTAssertEqual(forwardToNext.target, 4.0, accuracy: 0.001)
-        XCTAssertEqual(forwardToNext.direction, 1)
-
-        let reverseToPrevious = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
-            loops: loops,
-            time: 4.03,
-            direction: -1,
-            guardBand: 0.05
-        ))
-        XCTAssertEqual(reverseToPrevious.target, 2.0, accuracy: 0.001)
-        XCTAssertEqual(reverseToPrevious.direction, -1)
-
-        let reverseAtEnd = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
-            loops: loops,
-            time: 8.96,
-            direction: 1,
-            guardBand: 0.05
-        ))
-        XCTAssertEqual(reverseAtEnd.target, 8.98, accuracy: 0.001)
-        XCTAssertEqual(reverseAtEnd.direction, -1)
-
-        let forwardAtStart = try XCTUnwrap(VideoLoopBoundaryPlanner.swingDecision(
-            loops: loops,
-            time: 1.02,
-            direction: -1,
-            guardBand: 0.05
-        ))
-        XCTAssertEqual(forwardAtStart.target, 1.0, accuracy: 0.001)
-        XCTAssertEqual(forwardAtStart.direction, 1)
-    }
-
-    func testSwingPlaybackRateUsesReverseDirection() {
+    func testPlaybackRateUsesForwardSpeed() {
         let item = CollageItem(
             url: URL(fileURLWithPath: "/tmp/example.mov"),
             kind: .video,
@@ -148,11 +108,32 @@ final class CoreLogicTests: XCTestCase {
             texture: nil
         )
 
-        item.playbackMode = .swing
         item.speed = 1.25
-        item.swingDirection = -1
 
-        XCTAssertEqual(item.playbackRate, -1.25, accuracy: 0.001)
-        XCTAssertEqual(item.normalizedSwingDirection, -1)
+        XCTAssertEqual(item.playbackRate, 1.25, accuracy: 0.001)
+    }
+
+    func testLegacySwingPlaybackModeDoesNotBlockSavedItemDecode() throws {
+        let data = Data("""
+        {
+          "path": "/tmp/example.mov",
+          "weight": 1,
+          "zoom": 1,
+          "panX": 0,
+          "panY": 0,
+          "speed": 1,
+          "volume": 1,
+          "muted": false,
+          "playbackMode": 1,
+          "swingDirection": -1,
+          "abLoops": []
+        }
+        """.utf8)
+
+        let saved = try JSONDecoder().decode(SavedItem.self, from: data)
+
+        XCTAssertEqual(saved.path, "/tmp/example.mov")
+        XCTAssertEqual(saved.speed, 1)
+        XCTAssertTrue(saved.abLoops.isEmpty)
     }
 }

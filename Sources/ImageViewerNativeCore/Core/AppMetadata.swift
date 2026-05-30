@@ -67,29 +67,6 @@ enum MediaKind {
     case video
 }
 
-enum VideoPlaybackMode: Int, Codable, CaseIterable {
-    case loop
-    case swing
-
-    var displayName: String {
-        switch self {
-        case .loop:
-            return "Loop"
-        case .swing:
-            return "Swing"
-        }
-    }
-
-    var badgeName: String {
-        switch self {
-        case .loop:
-            return "Loop"
-        case .swing:
-            return "Swing"
-        }
-    }
-}
-
 enum MediaDynamicRange: Int {
     case standard
     case wide

@@ -62,8 +62,6 @@ extension MetalCollageView {
                     speed: item.speed,
                     volume: item.volume,
                     muted: item.muted,
-                    playbackMode: item.kind == .video ? item.playbackMode : nil,
-                    swingDirection: item.kind == .video ? item.normalizedSwingDirection : nil,
                     currentTime: item.kind == .video ? item.currentTimeSeconds : nil,
                     playing: item.kind == .video ? item.playWhenVisible : nil,
                     abLoops: item.abLoops.map { SavedLoop(a: $0.a, b: $0.b) }
@@ -111,8 +109,6 @@ extension MetalCollageView {
                 item.speed = saved.speed
                 item.volume = max(0, min(1, saved.volume ?? 1))
                 item.muted = saved.muted
-                item.playbackMode = saved.playbackMode ?? .loop
-                item.swingDirection = (saved.swingDirection ?? 1) < 0 ? -1 : 1
                 item.abLoops = saved.abLoops.map { ($0.a, $0.b) }
                 applyAudioState(for: item)
                 if let seconds = saved.currentTime, seconds.isFinite, seconds > 0 {

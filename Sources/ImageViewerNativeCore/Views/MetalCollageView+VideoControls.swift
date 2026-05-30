@@ -27,30 +27,6 @@ extension MetalCollageView {
         tickVideoUI()
     }
 
-    @objc func toggleSelectedVideoPlaybackMode() {
-        guard let item = selectedVideoItem() else { return }
-        let nextMode: VideoPlaybackMode = item.playbackMode == .loop ? .swing : .loop
-        setPlaybackMode(for: item, mode: nextMode)
-    }
-
-    func setPlaybackMode(for item: CollageItem, mode: VideoPlaybackMode) {
-        guard item.kind == .video, item.playbackMode != mode else { return }
-        item.playbackMode = mode
-        if mode == .loop {
-            item.swingDirection = 1
-        } else if item.currentTimeSeconds <= 0.05 {
-            item.swingDirection = 1
-        } else if item.durationSeconds > 0 && item.currentTimeSeconds >= item.durationSeconds - 0.05 {
-            item.swingDirection = -1
-        }
-        resetVideoFrameHistory(for: item)
-        if item.isVideoPlaying {
-            resumePlayback(for: item)
-        }
-        overlay.needsDisplay = true
-        tickVideoUI()
-    }
-
     @objc func toggleSelectedVideoMute() {
         guard let item = selectedVideoItem() else { return }
         item.muted.toggle()
@@ -96,15 +72,9 @@ extension MetalCollageView {
         }
     }
 
-    func resumePlayback(for item: CollageItem, direction: Float? = nil) {
+    func resumePlayback(for item: CollageItem) {
         guard item.kind == .video else { return }
-        if let direction {
-            item.swingDirection = direction < 0 ? -1 : 1
-        }
-        if item.playbackMode == .loop {
-            item.swingDirection = 1
-        }
-        item.player?.rate = effectivePlaybackRate(for: item)
+        item.player?.rate = item.playbackRate
     }
 
     @objc func speedDownSelectedVideo() {
@@ -248,7 +218,7 @@ extension MetalCollageView {
         let wasPlaying = item.isVideoPlaying
         resetVideoFrameHistory(for: item)
         if wasPlaying {
-            seekPlaybackPlayer(item, to: start, direction: 1, resumeWhenDone: true)
+            seekPlaybackPlayer(item, to: start, resumeWhenDone: true)
             isPaused = false
         } else {
             item.player?.seek(to: CMTime(seconds: start, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
@@ -294,16 +264,6 @@ extension MetalCollageView {
         volumeLabel.stringValue = "Vol \(Int((item.volume * 100).rounded()))%"
         speedLabel.stringValue = String(format: "%.2fx", item.speed)
         timeLabel.stringValue = "\(formatTime(item.currentTimeSeconds)) / \(formatTime(item.durationSeconds))"
-        let mode = item.playbackMode
-        playbackModeButton.state = mode == .loop ? .on : .off
-        setVideoButtonAppearance(playbackModeButton, accent: mode == .loop)
-        setIcon(
-            playbackModeButton,
-            symbol: "repeat",
-            fallbackTitle: "Lp",
-            tooltip: mode == .loop ? "Loop playback is on. Press to switch to Swing." : "Swing playback is on. Press to switch to Loop.",
-            pointSize: 16
-        )
         restoreABButton.isHidden = !item.hasSavedABHistory
         restoreABButton.isEnabled = item.hasSavedABHistory
         timelineView.needsDisplay = true
@@ -314,9 +274,7 @@ extension MetalCollageView {
         let now = CACurrentMediaTime()
         for item in items where item.kind == .video {
             guard item.isVideoPlaying else { continue }
-            syncSwingDirectionFromPlayer(for: item)
             if item.abLoops.isEmpty {
-                enforceWholeVideoBoundary(for: item)
                 continue
             }
             if item.pendingA != nil || item.pendingB != nil || item.abLoopBypassUntil > now {
@@ -325,10 +283,6 @@ extension MetalCollageView {
             let t = item.currentTimeSeconds
             let guardBand = max(0.045, Double(max(0.1, item.speed)) * 0.075)
             let loops = item.abLoops.sorted { $0.a < $1.a }
-            if item.playbackMode == .swing {
-                enforceSwingLoops(for: item, loops: loops, time: t, guardBand: guardBand)
-                continue
-            }
             let targetStart: Double?
 
             if let index = loops.firstIndex(where: { t >= $0.a - 0.02 && t < $0.b - guardBand }) {
@@ -347,22 +301,12 @@ extension MetalCollageView {
     }
 
     func seekLoopingPlayer(_ item: CollageItem, to seconds: Double) {
-        seekPlaybackPlayer(item, to: seconds, direction: 1, resumeWhenDone: true)
+        seekPlaybackPlayer(item, to: seconds, resumeWhenDone: true)
     }
 
-    func seekSwingingPlayer(_ item: CollageItem, to seconds: Double, direction: Float) {
-        seekPlaybackPlayer(item, to: seconds, direction: direction, resumeWhenDone: true)
-    }
-
-    func seekPlaybackPlayer(_ item: CollageItem, to seconds: Double, direction: Float?, resumeWhenDone: Bool) {
+    func seekPlaybackPlayer(_ item: CollageItem, to seconds: Double, resumeWhenDone: Bool) {
         guard let player = item.player else { return }
-        if let direction {
-            item.swingDirection = direction < 0 ? -1 : 1
-        }
-        if item.playbackMode == .loop {
-            item.swingDirection = 1
-        }
-        let rate = effectivePlaybackRate(for: item)
+        let rate = item.playbackRate
         resetVideoFrameHistory(for: item)
         player.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in
             guard resumeWhenDone else { return }
@@ -371,55 +315,6 @@ extension MetalCollageView {
         if resumeWhenDone {
             player.rate = rate
         }
-    }
-
-    func effectivePlaybackRate(for item: CollageItem) -> Float {
-        let requestedRate = item.playbackRate
-        guard requestedRate < -0.001,
-              let playerItem = item.player?.currentItem,
-              playerItem.status == .readyToPlay else {
-            return requestedRate
-        }
-
-        if abs(requestedRate) > 1.001, !playerItem.canPlayFastReverse {
-            return -1
-        }
-        if !playerItem.canPlayReverse, playerItem.canPlaySlowReverse {
-            return max(requestedRate, -0.5)
-        }
-        return requestedRate
-    }
-
-    func syncSwingDirectionFromPlayer(for item: CollageItem) {
-        guard item.playbackMode == .swing, let player = item.player else { return }
-        if player.rate < -0.001 {
-            item.swingDirection = -1
-        } else if player.rate > 0.001 {
-            item.swingDirection = 1
-        }
-    }
-
-    func enforceWholeVideoBoundary(for item: CollageItem) {
-        guard item.playbackMode == .swing else { return }
-        let duration = item.durationSeconds
-        guard duration > 0.05 else { return }
-        let t = item.currentTimeSeconds
-        let guardBand = max(0.035, Double(max(0.1, item.speed)) * 0.06)
-        if item.normalizedSwingDirection > 0, t >= duration - guardBand {
-            seekSwingingPlayer(item, to: max(0, duration - 0.02), direction: -1)
-        } else if item.normalizedSwingDirection < 0, t <= guardBand {
-            seekSwingingPlayer(item, to: 0, direction: 1)
-        }
-    }
-
-    func enforceSwingLoops(for item: CollageItem, loops: [(a: Double, b: Double)], time: Double, guardBand: Double) {
-        guard let decision = VideoLoopBoundaryPlanner.swingDecision(
-            loops: loops,
-            time: time,
-            direction: item.normalizedSwingDirection,
-            guardBand: guardBand
-        ) else { return }
-        seekSwingingPlayer(item, to: decision.target, direction: decision.direction)
     }
 
     func formatTime(_ seconds: Double) -> String {

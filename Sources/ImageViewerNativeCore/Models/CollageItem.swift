@@ -55,8 +55,6 @@ final class CollageItem: Equatable, @unchecked Sendable {
     var volume: Float = 1
     var muted = false
     var playWhenVisible = true
-    var playbackMode: VideoPlaybackMode = .loop
-    var swingDirection: Float = 1
     var frozenPlayWhenVisible: Bool?
 
     var cellRect: CGRect = .zero
@@ -140,11 +138,7 @@ final class CollageItem: Equatable, @unchecked Sendable {
     }
 
     var playbackRate: Float {
-        speed * (playbackMode == .swing ? normalizedSwingDirection : 1)
-    }
-
-    var normalizedSwingDirection: Float {
-        swingDirection < 0 ? -1 : 1
+        speed
     }
 
     static func normalizedRotationQuarterTurns(_ turns: Int) -> Int {

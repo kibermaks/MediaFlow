@@ -39,7 +39,6 @@ final class MetalCollageView: MTKView {
     let muteButton = NSButton(title: "", target: nil, action: nil)
     let soloButton = NSButton(title: "", target: nil, action: nil)
     let playButton = NSButton(title: "", target: nil, action: nil)
-    let playbackModeButton = NSButton(title: "", target: nil, action: nil)
     let restoreABButton = NSButton(title: "", target: nil, action: nil)
     var uiTimer: Timer?
     var flowTimer: Timer?

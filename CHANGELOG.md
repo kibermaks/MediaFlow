@@ -15,6 +15,7 @@ All notable MediaFlow changes are tracked here. Keep the newest release first an
 - Speed changes, seeks, loop jumps, and scrubbing reset temporal frame history to avoid stale-frame artifacts.
 - Quality Controls now uses compact custom switches, segmented sampling controls, and custom sliders.
 - A-B controls now act on the selected video without unexpectedly changing selection.
+- Removed reverse Swing playback mode so videos and A-B segments stay in smooth forward Loop playback.
 
 ## [0.3] - 2026-05-29
 

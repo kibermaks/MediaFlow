@@ -57,11 +57,6 @@ extension MetalCollageView {
         playButton.action = #selector(toggleSelectedVideoPlayback)
         videoStack.addArrangedSubview(playButton)
 
-        configureVideoIconButton(playbackModeButton, symbol: "repeat", fallbackTitle: "Lp", tooltip: "Loop playback is on. Press to switch to Swing.", accent: true, iconPointSize: 16)
-        playbackModeButton.target = self
-        playbackModeButton.action = #selector(toggleSelectedVideoPlaybackMode)
-        videoStack.addArrangedSubview(playbackModeButton)
-
         configureVideoIconButton(muteButton, symbol: "speaker.wave.2.fill", fallbackTitle: "Mute", tooltip: "Mute or unmute this video")
         muteButton.target = self
         muteButton.action = #selector(toggleSelectedVideoMute)
