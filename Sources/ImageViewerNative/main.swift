@@ -8,6 +8,7 @@ import MetalKit
 import Photos
 import QuartzCore
 import CryptoKit
+import Darwin
 import Security
 import simd
 import UniformTypeIdentifiers
@@ -34,6 +35,7 @@ private enum MediaKind {
 private enum MediaDynamicRange: Int {
     case standard
     case wide
+    case adaptiveHDR
     case hlg
     case pq
 
@@ -41,7 +43,7 @@ private enum MediaDynamicRange: Int {
         switch self {
         case .standard, .wide:
             return false
-        case .hlg, .pq:
+        case .adaptiveHDR, .hlg, .pq:
             return true
         }
     }
@@ -52,10 +54,12 @@ private enum MediaDynamicRange: Int {
             return 0
         case .wide:
             return 1
-        case .pq:
+        case .adaptiveHDR:
             return 2
-        case .hlg:
+        case .pq:
             return 3
+        case .hlg:
+            return 4
         }
     }
 }
@@ -283,6 +287,20 @@ private enum ToneRecoveryStore {
     }
 }
 
+private enum BrightnessBoostStore {
+    private static let strengthKey = "brightnessBoostStrength"
+
+    static var strength: Float {
+        get {
+            guard UserDefaults.standard.object(forKey: strengthKey) != nil else { return 0 }
+            return max(0, min(1, UserDefaults.standard.float(forKey: strengthKey)))
+        }
+        set {
+            UserDefaults.standard.set(max(0, min(1, newValue)), forKey: strengthKey)
+        }
+    }
+}
+
 private enum MagicRescueStore {
     private static let enabledKey = "magicRescueEnabled"
     private static let strengthKey = "magicRescueStrength"
@@ -318,6 +336,15 @@ private enum SplitCompareStore {
     }
 }
 
+private enum DebugInformationStore {
+    private static let key = "debugInformationEnabled"
+
+    static var enabled: Bool {
+        get { UserDefaults.standard.bool(forKey: key) }
+        set { UserDefaults.standard.set(newValue, forKey: key) }
+    }
+}
+
 private enum DefaultQualityStore {
     private static let qualityModeKey = "defaultMetalQualityModeRaw"
 
@@ -329,6 +356,34 @@ private enum DefaultQualityStore {
         set {
             UserDefaults.standard.set(max(0, min(4, newValue)), forKey: qualityModeKey)
         }
+    }
+}
+
+private enum ProcessCPUUsage {
+    static func currentPercent() -> Double {
+        var threadList: thread_act_array_t?
+        var threadCount = mach_msg_type_number_t(0)
+        let result = task_threads(mach_task_self_, &threadList, &threadCount)
+        guard result == KERN_SUCCESS, let threads = threadList else { return 0 }
+        defer {
+            let byteCount = vm_size_t(Int(threadCount) * MemoryLayout<thread_act_t>.stride)
+            vm_deallocate(mach_task_self_, vm_address_t(UInt(bitPattern: threads)), byteCount)
+        }
+
+        var total: Double = 0
+        for index in 0..<Int(threadCount) {
+            var info = thread_basic_info()
+            var count = mach_msg_type_number_t(THREAD_INFO_MAX)
+            let status = withUnsafeMutablePointer(to: &info) { pointer in
+                pointer.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                    thread_info(threads[index], thread_flavor_t(THREAD_BASIC_INFO), $0, &count)
+                }
+            }
+            if status == KERN_SUCCESS, (info.flags & TH_FLAGS_IDLE) == 0 {
+                total += Double(info.cpu_usage) / Double(TH_USAGE_SCALE) * 100
+            }
+        }
+        return max(0, total)
     }
 }
 
@@ -367,6 +422,7 @@ private final class CollageItem: Equatable, @unchecked Sendable {
     var naturalDenoiseStrength = NaturalDenoiseStore.strength
     var toneRecoveryEnabled = ToneRecoveryStore.enabled
     var toneRecoveryStrength = ToneRecoveryStore.strength
+    var brightnessBoost = BrightnessBoostStore.strength
     var magicRescueEnabled = MagicRescueStore.enabled
     var magicRescueStrength = MagicRescueStore.strength
     var speed: Float = 1
@@ -619,6 +675,7 @@ private struct SavedQualityProfile: Codable {
     var naturalDenoiseStrength: Float
     var toneRecoveryEnabled: Bool
     var toneRecoveryStrength: Float
+    var brightnessBoost: Float?
     var magicRescueEnabled: Bool
     var magicRescueStrength: Float
 }
@@ -640,6 +697,7 @@ private enum QualityProfileStore {
         item.naturalDenoiseStrength = max(0, min(1, profile.naturalDenoiseStrength))
         item.toneRecoveryEnabled = profile.toneRecoveryEnabled
         item.toneRecoveryStrength = max(0, min(1, profile.toneRecoveryStrength))
+        item.brightnessBoost = max(0, min(1, profile.brightnessBoost ?? item.brightnessBoost))
         item.magicRescueEnabled = profile.magicRescueEnabled
         item.magicRescueStrength = max(0, min(1, profile.magicRescueStrength))
         return true
@@ -657,6 +715,7 @@ private enum QualityProfileStore {
             naturalDenoiseStrength: max(0, min(1, item.naturalDenoiseStrength)),
             toneRecoveryEnabled: item.toneRecoveryEnabled,
             toneRecoveryStrength: max(0, min(1, item.toneRecoveryStrength)),
+            brightnessBoost: max(0, min(1, item.brightnessBoost)),
             magicRescueEnabled: item.magicRescueEnabled,
             magicRescueStrength: max(0, min(1, item.magicRescueStrength))
         )
@@ -865,7 +924,8 @@ private struct MetalFragmentUniforms {
     var denoiseStrength: Float
     var toneStrength: Float
     var magicStrength: Float
-    var reserved: Float = 0
+    var brightnessBoost: Float
+    var temporalGuard: Float = 0
 }
 
 private final class MetalRenderer: NSObject, MTKViewDelegate {
@@ -876,6 +936,7 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
     var naturalDenoiseStrength = NaturalDenoiseStore.strength
     var toneRecoveryEnabled = ToneRecoveryStore.enabled
     var toneRecoveryStrength = ToneRecoveryStore.strength
+    var brightnessBoost = BrightnessBoostStore.strength
     var magicRescueEnabled = MagicRescueStore.enabled
     var magicRescueStrength = MagicRescueStore.strength
     var splitCompareEnabled = SplitCompareStore.enabled
@@ -915,7 +976,8 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
             float denoiseStrength;
             float toneStrength;
             float magicStrength;
-            float reserved;
+            float brightnessBoost;
+            float temporalGuard;
         };
 
         vertex VertexOut vertex_main(uint vid [[vertex_id]],
@@ -1071,6 +1133,61 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
             return half4(max(rgb, half3(0.0)), center.a);
         }
 
+        half4 guarded_temporal_blend(half4 previous, half4 current, float blend, float guardAmount) {
+            float t = clamp(blend, 0.0, 1.0);
+            t = t * t * (3.0 - 2.0 * t);
+
+            float3 currentRgb = max(float3(current.rgb), float3(0.0));
+            float3 previousRgb = max(float3(previous.rgb), float3(0.0));
+            float currentPeak = max(1.0, max(max(currentRgb.r, currentRgb.g), currentRgb.b));
+            float previousPeak = max(1.0, max(max(previousRgb.r, previousRgb.g), previousRgb.b));
+            float3 currentNorm = currentRgb / currentPeak;
+            float3 previousNorm = previousRgb / previousPeak;
+            float currentLuma = dot(currentNorm, float3(0.2126, 0.7152, 0.0722));
+            float previousLuma = dot(previousNorm, float3(0.2126, 0.7152, 0.0722));
+            float lumaDelta = abs(currentLuma - previousLuma);
+            float chromaDelta = length((currentNorm - float3(currentLuma)) - (previousNorm - float3(previousLuma)));
+            float peakDelta = abs(log2(currentPeak / max(previousPeak, 0.0001)));
+            float unstable = smoothstep(0.020, 0.16, lumaDelta + chromaDelta * 0.24 + peakDelta * 0.08);
+            float hdrPressure = smoothstep(1.12, 2.8, max(currentPeak, previousPeak));
+            float currentBias = max(unstable * 0.86, hdrPressure * clamp(guardAmount, 0.0, 1.0) * 0.68);
+            float effectiveT = mix(t, 1.0, currentBias);
+            return mix(previous, current, half(effectiveT));
+        }
+
+        half4 brightness_boost(half4 color, float amount) {
+            amount = clamp(amount, 0.0, 1.0);
+            if (amount <= 0.001) {
+                return color;
+            }
+
+            float3 rgb = max(float3(color.rgb), float3(0.0));
+            float peak = max(1.0, max(max(rgb.r, rgb.g), rgb.b));
+            rgb /= peak;
+            float luma = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+            float shadowMask = 1.0 - smoothstep(0.06, 0.50, luma);
+            float midMask = smoothstep(0.10, 0.52, luma) * (1.0 - smoothstep(0.72, 0.98, luma));
+            float highlightMask = smoothstep(0.66, 1.02, luma);
+
+            float exposure = exp2(amount * 0.76);
+            rgb *= exposure;
+            rgb = pow(max(rgb, float3(0.0)), float3(mix(1.0, 0.68, amount * shadowMask)));
+            rgb += amount * 0.075 * midMask;
+
+            float newLuma = dot(rgb, float3(0.2126, 0.7152, 0.0722));
+            float contrast = 1.0 + amount * (0.08 + 0.08 * midMask);
+            rgb = max((rgb - float3(newLuma)) * contrast + float3(newLuma), float3(0.0));
+
+            float sat = max(max(rgb.r, rgb.g), rgb.b) - min(min(rgb.r, rgb.g), rgb.b);
+            float vibrance = amount * (0.08 + 0.14 * (1.0 - clamp(sat, 0.0, 1.0)));
+            float gray = dot(rgb, float3(0.299, 0.587, 0.114));
+            rgb = mix(float3(gray), rgb, 1.0 + vibrance);
+
+            float3 rolled = rgb / (float3(1.0) + rgb * (0.12 + 0.22 * amount));
+            rgb = mix(rgb, rolled, highlightMask * amount * 0.58);
+            return half4(half3(max(rgb * peak, float3(0.0))), color.a);
+        }
+
         half4 tone_recovery(half4 color, float strength) {
             if (strength <= 0.001) {
                 return color;
@@ -1148,6 +1265,18 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
             return half4(half3(max(rgb * peak, float3(0.0))), color.a);
         }
 
+        half4 apply_quality_chain(texture2d<half> sourceTex,
+                                  half4 color,
+                                  float2 uv,
+                                  sampler linearSampler,
+                                  constant FragmentUniforms &uniforms) {
+            color = natural_denoise(sourceTex, color, uv, linearSampler, uniforms.denoiseStrength);
+            color = tone_recovery(color, uniforms.toneStrength);
+            color = brightness_boost(color, uniforms.brightnessBoost);
+            color = magic_rescue(sourceTex, color, uv, linearSampler, uniforms.magicStrength);
+            return color;
+        }
+
         fragment half4 fragment_main(VertexOut in [[stage_in]],
                                      texture2d<half> tex [[texture(0)]],
                                      texture2d<half> previousTex [[texture(1)]],
@@ -1159,14 +1288,15 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
             bool rawSide = uniforms.splitCompare != 0 && (reversedCompare ? !leftSide : leftSide);
             uint samplingMode = rawSide ? 0 : uniforms.samplingMode;
             half4 color = sample_mode(tex, in.texCoord, linearSampler, nearestSampler, samplingMode);
-            if (!rawSide && uniforms.hasPreviousTexture != 0) {
-                half4 previous = sample_mode(previousTex, in.texCoord, linearSampler, nearestSampler, uniforms.samplingMode);
-                color = mix(previous, color, half(clamp(uniforms.temporalBlend, 0.0, 1.0)));
-            }
             if (!rawSide) {
-                color = natural_denoise(tex, color, in.texCoord, linearSampler, uniforms.denoiseStrength);
-                color = tone_recovery(color, uniforms.toneStrength);
-                color = magic_rescue(tex, color, in.texCoord, linearSampler, uniforms.magicStrength);
+                if (uniforms.hasPreviousTexture != 0) {
+                    half4 previous = sample_mode(previousTex, in.texCoord, linearSampler, nearestSampler, uniforms.samplingMode);
+                    previous = apply_quality_chain(previousTex, previous, in.texCoord, linearSampler, uniforms);
+                    color = apply_quality_chain(tex, color, in.texCoord, linearSampler, uniforms);
+                    color = guarded_temporal_blend(previous, color, uniforms.temporalBlend, uniforms.temporalGuard);
+                } else {
+                    color = apply_quality_chain(tex, color, in.texCoord, linearSampler, uniforms);
+                }
             }
             if (uniforms.splitCompare != 0 && abs(in.position.x - uniforms.viewportWidth * 0.5) < 1.0) {
                 color = half4(1.0, 1.0, 1.0, 1.0);
@@ -1237,6 +1367,7 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
         encoder.endEncoding()
         commandBuffer.present(drawable)
         commandBuffer.commit()
+        canvas.recordRenderedFrame()
     }
 
     private func updateVideoTextureIfNeeded(for item: CollageItem) {
@@ -1277,12 +1408,24 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
         )
         if status == kCVReturnSuccess, let cvTexture, let texture = CVMetalTextureGetTexture(cvTexture) {
             let itemTime = displayTime.isNumeric ? displayTime.seconds : time.seconds
-            if let current = item.texture {
+            let lastItemTime = item.videoLastItemTime
+            var canBlendFromCurrentTexture = false
+            if let lastItemTime, itemTime.isFinite {
+                let frameDelta = itemTime - lastItemTime
+                let maxBlendGap = max(0.08, item.videoNominalFrameDuration * 4.0)
+                canBlendFromCurrentTexture = frameDelta > 0.0001 && frameDelta <= maxBlendGap
+            }
+
+            if canBlendFromCurrentTexture, let current = item.texture {
                 item.previousVideoTexture = current
                 item.previousVideoTextureRef = item.currentVideoTextureRef
                 item.videoFrameTransitionStart = hostTime
+            } else {
+                item.previousVideoTexture = nil
+                item.previousVideoTextureRef = nil
+                item.videoFrameTransitionStart = hostTime
             }
-            if let lastItemTime = item.videoLastItemTime, itemTime.isFinite {
+            if let lastItemTime, itemTime.isFinite {
                 let frameDelta = abs(itemTime - lastItemTime)
                 if frameDelta > 0.0001 {
                     item.videoNominalFrameDuration = max(1.0 / 240.0, min(0.5, frameDelta))
@@ -1351,7 +1494,9 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
             temporalBlend: temporal.blend,
             denoiseStrength: item.naturalDenoiseEnabled ? item.naturalDenoiseStrength : 0,
             toneStrength: item.toneRecoveryEnabled ? item.toneRecoveryStrength : 0,
-            magicStrength: item.magicRescueEnabled ? item.magicRescueStrength : 0
+            magicStrength: item.magicRescueEnabled ? item.magicRescueStrength : 0,
+            brightnessBoost: item.brightnessBoost,
+            temporalGuard: item.dynamicRange.usesEDR ? 1 : 0
         )
 
         let minX = Float(rect.minX / viewport.width * 2 - 1)
@@ -1400,9 +1545,12 @@ private final class MetalRenderer: NSObject, MTKViewDelegate {
         }
 
         let now = CACurrentMediaTime()
-        let expectedInterval = item.videoNominalFrameDuration / max(0.05, TimeInterval(item.speed))
+        let speed = max(0.05, TimeInterval(item.speed))
+        let expectedInterval = item.videoNominalFrameDuration / speed
         let frameInterval = max(expectedInterval, item.videoObservedFrameInterval)
-        let transitionDuration = max(1.0 / 120.0, min(0.22, frameInterval * 0.72))
+        let transitionScale: TimeInterval = item.dynamicRange.usesEDR ? 0.42 : 0.56
+        let maxTransition: TimeInterval = item.dynamicRange.usesEDR ? 0.12 : 0.18
+        let transitionDuration = max(1.0 / 120.0, min(maxTransition, frameInterval * transitionScale))
         let blend = max(0, min(1, (now - item.videoFrameTransitionStart) / transitionDuration))
         if blend >= 0.999 {
             item.previousVideoTexture = nil
@@ -1447,6 +1595,9 @@ private final class OverlayView: NSView {
 
         if canvas.items.isEmpty {
             drawEmptyState(in: bounds, isDragging: canvas.isDraggingMedia)
+            if canvas.debugInformationEnabled {
+                drawDebugInformation(fps: canvas.debugFramesPerSecond, cpuPercent: canvas.debugCPUPercent, in: bounds)
+            }
             return
         }
 
@@ -1475,6 +1626,37 @@ private final class OverlayView: NSView {
             path.setLineDash([7, 5], count: 2, phase: 0)
             path.stroke()
         }
+
+        if canvas.debugInformationEnabled {
+            drawDebugInformation(fps: canvas.debugFramesPerSecond, cpuPercent: canvas.debugCPUPercent, in: bounds)
+        }
+    }
+
+    private func drawDebugInformation(fps: Double, cpuPercent: Double, in rect: CGRect) {
+        let safeFPS = fps.isFinite && fps > 0 ? fps : 0
+        let safeCPU = cpuPercent.isFinite ? max(0, min(999, cpuPercent)) : 0
+        let fpsText = safeFPS > 0 ? String(format: "FPS %.1f", safeFPS) : "FPS --"
+        let text = "\(fpsText)   App CPU \(Int(safeCPU.rounded()))%"
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        let textSize = (text as NSString).size(withAttributes: [.font: font])
+        let badge = CGRect(
+            x: rect.minX + 14,
+            y: max(rect.minY + 14, rect.maxY - 38),
+            width: ceil(textSize.width) + 20,
+            height: 24
+        )
+
+        NSColor.black.withAlphaComponent(0.62).setFill()
+        NSBezierPath(roundedRect: badge, xRadius: 8, yRadius: 8).fill()
+        NSColor.white.withAlphaComponent(0.16).setStroke()
+        let border = NSBezierPath(roundedRect: badge, xRadius: 8, yRadius: 8)
+        border.lineWidth = 0.8
+        border.stroke()
+
+        text.draw(in: badge.insetBy(dx: 10, dy: 5), withAttributes: [
+            .font: font,
+            .foregroundColor: NSColor.white.withAlphaComponent(0.90)
+        ])
     }
 
     private func drawSplitCompareOverlay(in rect: CGRect, reversed: Bool) {
@@ -1834,6 +2016,10 @@ private final class MetalCollageView: MTKView {
     private weak var dragItem: CollageItem?
     private var didDragItem = false
     private var qualityEditsDefaults = false
+    private var debugFrameCount = 0
+    private var debugLastSampleTime = CACurrentMediaTime()
+    private(set) var debugFramesPerSecond: Double = 0
+    private(set) var debugCPUPercent: Double = 0
 
     var flowMaxVisibleItems: Int = FlowSettingsStore.maxVisibleItems {
         didSet {
@@ -1946,6 +2132,17 @@ private final class MetalCollageView: MTKView {
         }
     }
 
+    var brightnessBoost: Float = BrightnessBoostStore.strength {
+        didSet {
+            brightnessBoost = max(0, min(1, brightnessBoost))
+            guard oldValue != brightnessBoost else { return }
+            BrightnessBoostStore.strength = brightnessBoost
+            renderer.brightnessBoost = brightnessBoost
+            needsDisplay = true
+            NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
+        }
+    }
+
     var magicRescueEnabled: Bool = MagicRescueStore.enabled {
         didSet {
             guard oldValue != magicRescueEnabled else { return }
@@ -1989,6 +2186,16 @@ private final class MetalCollageView: MTKView {
         }
     }
 
+    var debugInformationEnabled: Bool = DebugInformationStore.enabled {
+        didSet {
+            guard oldValue != debugInformationEnabled else { return }
+            DebugInformationStore.enabled = debugInformationEnabled
+            resetDebugInformationMetrics()
+            overlay.needsDisplay = true
+            needsDisplay = true
+        }
+    }
+
     init(frame frameRect: NSRect, device: MTLDevice) {
         self.textureLoader = MTKTextureLoader(device: device)
         let workingColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
@@ -2018,6 +2225,7 @@ private final class MetalCollageView: MTKView {
         renderer.naturalDenoiseStrength = naturalDenoiseStrength
         renderer.toneRecoveryEnabled = toneRecoveryEnabled
         renderer.toneRecoveryStrength = toneRecoveryStrength
+        renderer.brightnessBoost = brightnessBoost
         renderer.magicRescueEnabled = magicRescueEnabled
         renderer.magicRescueStrength = magicRescueStrength
         renderer.splitCompareEnabled = splitCompareEnabled
@@ -2046,6 +2254,31 @@ private final class MetalCollageView: MTKView {
         fatalError("init(coder:) has not been implemented")
     }
 
+    func setDebugInformationEnabled(_ enabled: Bool) {
+        debugInformationEnabled = enabled
+    }
+
+    func recordRenderedFrame() {
+        guard debugInformationEnabled else { return }
+        debugFrameCount += 1
+        let now = CACurrentMediaTime()
+        let elapsed = now - debugLastSampleTime
+        guard elapsed >= 0.5 else { return }
+
+        debugFramesPerSecond = Double(debugFrameCount) / elapsed
+        debugCPUPercent = ProcessCPUUsage.currentPercent()
+        debugFrameCount = 0
+        debugLastSampleTime = now
+        overlay.needsDisplay = true
+    }
+
+    private func resetDebugInformationMetrics() {
+        debugFrameCount = 0
+        debugLastSampleTime = CACurrentMediaTime()
+        debugFramesPerSecond = 0
+        debugCPUPercent = debugInformationEnabled ? ProcessCPUUsage.currentPercent() : 0
+    }
+
     private func syncLayerEDRMetadata() {
         guard let metalLayer = layer as? CAMetalLayer else { return }
         let displayedItems = visibleSlots.isEmpty ? items : visibleSlots.map(\.item)
@@ -2065,7 +2298,7 @@ private final class MetalCollageView: MTKView {
             metalLayer.edrMetadata = CAEDRMetadata.hlg
         case .pq:
             metalLayer.edrMetadata = CAEDRMetadata.hdr10(minLuminance: 0, maxLuminance: 1000, opticalOutputScale: 100)
-        case .standard, .wide:
+        case .standard, .wide, .adaptiveHDR:
             metalLayer.edrMetadata = nil
         }
     }
@@ -2646,6 +2879,10 @@ private final class MetalCollageView: MTKView {
         qualityTargetItem()?.toneRecoveryStrength ?? toneRecoveryStrength
     }
 
+    func activeBrightnessBoost() -> Float {
+        qualityTargetItem()?.brightnessBoost ?? brightnessBoost
+    }
+
     func activeMagicRescueEnabled() -> Bool {
         qualityTargetItem()?.magicRescueEnabled ?? magicRescueEnabled
     }
@@ -2717,6 +2954,15 @@ private final class MetalCollageView: MTKView {
             persistQualitySettings(for: item)
         } else {
             toneRecoveryStrength = strength
+        }
+    }
+
+    func setBrightnessBoost(_ strength: Float) {
+        if let item = qualityTargetItem() {
+            item.brightnessBoost = max(0, min(1, strength))
+            persistQualitySettings(for: item)
+        } else {
+            brightnessBoost = strength
         }
     }
 
@@ -2978,6 +3224,7 @@ private final class MetalCollageView: MTKView {
 
     private func setSpeed(for item: CollageItem, speed: Float) {
         item.speed = (speed * 100).rounded() / 100
+        resetVideoFrameHistory(for: item)
         if item.isVideoPlaying {
             item.player?.rate = item.speed
         }
@@ -2985,27 +3232,39 @@ private final class MetalCollageView: MTKView {
     }
 
     @objc private func setAForSelectedVideo() {
-        guard let item = keyboardVideoTarget() else { return }
-        setA(for: item)
+        guard let item = selectedVideoItem() else { return }
+        setA(for: item, updateSelection: false)
     }
 
-    private func setA(for item: CollageItem) {
+    private func setA(for item: CollageItem, updateSelection: Bool = true) {
         suspendABLoop(for: item, seconds: 30)
         item.pendingA = item.currentTimeSeconds
         activatePendingLoopIfReady(for: item)
-        selectOnly(item)
+        if updateSelection {
+            selectOnly(item)
+        } else {
+            timelineView.needsDisplay = true
+            overlay.needsDisplay = true
+            tickVideoUI()
+        }
     }
 
     @objc private func setBForSelectedVideo() {
-        guard let item = keyboardVideoTarget() else { return }
-        setB(for: item)
+        guard let item = selectedVideoItem() else { return }
+        setB(for: item, updateSelection: false)
     }
 
-    private func setB(for item: CollageItem) {
+    private func setB(for item: CollageItem, updateSelection: Bool = true) {
         suspendABLoop(for: item, seconds: 30)
         item.pendingB = item.currentTimeSeconds
         activatePendingLoopIfReady(for: item)
-        selectOnly(item)
+        if updateSelection {
+            selectOnly(item)
+        } else {
+            timelineView.needsDisplay = true
+            overlay.needsDisplay = true
+            tickVideoUI()
+        }
     }
 
     @objc private func addABForSelectedVideo() {
@@ -3014,7 +3273,7 @@ private final class MetalCollageView: MTKView {
     }
 
     @objc private func clearABForSelectedVideo() {
-        guard let item = keyboardVideoTarget() else { return }
+        guard let item = selectedVideoItem() else { return }
         clearAB(for: item)
     }
 
@@ -3614,10 +3873,7 @@ private final class MetalCollageView: MTKView {
 
     private func loadImage(url: URL) -> CollageItem? {
         let source = CGImageSourceCreateWithURL(url as CFURL, nil)
-        if let ciImage = CIImage(contentsOf: url, options: [
-            .applyOrientationProperty: true,
-            .colorSpace: mediaWorkingColorSpace
-        ]) {
+        if let ciImage = hdrAwareCIImage(contentsOf: url) {
             let extent = ciImage.extent.integral
             if extent.width > 0, extent.height > 0, extent.width.isFinite, extent.height.isFinite {
                 let width = max(1, Int(ceil(extent.width)))
@@ -3666,6 +3922,27 @@ private final class MetalCollageView: MTKView {
         }
     }
 
+    private func hdrAwareCIImage(contentsOf url: URL) -> CIImage? {
+        var options: [CIImageOption: Any] = [
+            .applyOrientationProperty: true,
+            .toneMapHDRtoSDR: false
+        ]
+        if #available(macOS 14.0, *) {
+            options[.expandToHDR] = true
+        }
+        guard var image = CIImage(contentsOf: url, options: options) else { return nil }
+
+        if #available(macOS 15.0, *),
+           image.contentHeadroom <= 1.01,
+           let gainMap = CIImage(contentsOf: url, options: [
+            .auxiliaryHDRGainMap: true,
+            .applyOrientationProperty: true
+           ]) {
+            image = image.applyingGainMap(gainMap)
+        }
+        return image
+    }
+
     private func generateMipmaps(for texture: MTLTexture) {
         guard texture.mipmapLevelCount > 1,
               let commandQueue = imageCommandQueue,
@@ -3678,12 +3955,15 @@ private final class MetalCollageView: MTKView {
     }
 
     private func imageDynamicRange(source: CGImageSource?, ciImage: CIImage?) -> MediaDynamicRange {
-        if #available(macOS 15.0, *), let ciImage, ciImage.contentHeadroom > 1.01 {
-            return .pq
-        }
+        var description = ""
         guard let source,
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else { return .standard }
-        let description = properties
+              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] else {
+            if #available(macOS 15.0, *), let ciImage, ciImage.contentHeadroom > 1.01 {
+                return .adaptiveHDR
+            }
+            return .standard
+        }
+        description = properties
             .map { "\(String(describing: $0.key))=\(String(describing: $0.value))" }
             .joined(separator: " ")
             .lowercased()
@@ -3693,10 +3973,28 @@ private final class MetalCollageView: MTKView {
         if description.contains("pq") || description.contains("2084") {
             return .pq
         }
+        if #available(macOS 15.0, *), let ciImage, ciImage.contentHeadroom > 1.01 {
+            return .adaptiveHDR
+        }
+        if imageHasHDRGainMap(source) {
+            return .adaptiveHDR
+        }
         if description.contains("display p3") || description.contains("display-p3") || description.contains("p3") || description.contains("2020") {
             return .wide
         }
         return .standard
+    }
+
+    private func imageHasHDRGainMap(_ source: CGImageSource?) -> Bool {
+        guard let source else { return false }
+        if CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil {
+            return true
+        }
+        if #available(macOS 15.0, *),
+           CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeISOGainMap) != nil {
+            return true
+        }
+        return false
     }
 
     private func loadVideo(url: URL) -> CollageItem? {
@@ -4074,8 +4372,8 @@ private final class MetalCollageView: MTKView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        window?.makeFirstResponder(self)
         let point = convert(event.locationInWindow, from: nil)
+        window?.makeFirstResponder(self)
         lastMousePoint = point
         updateHover(at: point)
         pendingSelectionToggleItem = nil
@@ -4473,6 +4771,10 @@ private enum FlowLibraryStyle {
 }
 
 private final class FlowPanelBackgroundView: NSView {
+    var panelTitle = "Flow Library" {
+        didSet { needsDisplay = true }
+    }
+
     override var isFlipped: Bool { true }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -4494,11 +4796,217 @@ private final class FlowPanelBackgroundView: NSView {
 
         let titleParagraph = NSMutableParagraphStyle()
         titleParagraph.alignment = .center
-        "Flow Library".draw(in: CGRect(x: 0, y: 8, width: bounds.width, height: 16), withAttributes: [
+        panelTitle.draw(in: CGRect(x: 0, y: 8, width: bounds.width, height: 16), withAttributes: [
             .font: NSFont.systemFont(ofSize: 12, weight: .semibold),
             .foregroundColor: FlowLibraryStyle.primaryText.withAlphaComponent(0.74),
             .paragraphStyle: titleParagraph
         ])
+    }
+}
+
+private struct PhotosImportCollection {
+    let id: String
+    let title: String
+    let subtitle: String
+    let assetCollection: PHAssetCollection?
+}
+
+private final class PhotosImportHeaderView: NSView {
+    var collectionTitle = "Photos Library" {
+        didSet { needsDisplay = true }
+    }
+    var assetCount = 0 {
+        didSet { needsDisplay = true }
+    }
+    var selectedCount = 0 {
+        didSet { needsDisplay = true }
+    }
+    var statusMessage: String? {
+        didSet { needsDisplay = true }
+    }
+    var isImporting = false {
+        didSet { needsDisplay = true }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: NSView.noIntrinsicMetric, height: 58)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let card = bounds.insetBy(dx: 0.5, dy: 0.5)
+        FlowLibraryStyle.cardFill.setFill()
+        NSBezierPath(roundedRect: card, xRadius: 8, yRadius: 8).fill()
+        FlowLibraryStyle.controlStroke.setStroke()
+        let border = NSBezierPath(roundedRect: card, xRadius: 8, yRadius: 8)
+        border.lineWidth = 1
+        border.stroke()
+
+        let circle = CGRect(x: 13, y: 12, width: 34, height: 34)
+        NSColor.black.withAlphaComponent(0.24).setFill()
+        NSBezierPath(ovalIn: circle).fill()
+        FlowLibraryStyle.accent.setStroke()
+        let ring = NSBezierPath(ovalIn: circle.insetBy(dx: 1.5, dy: 1.5))
+        ring.lineWidth = 2.5
+        ring.stroke()
+
+        let number = "\(max(selectedCount, 0))"
+        let numberParagraph = NSMutableParagraphStyle()
+        numberParagraph.alignment = .center
+        number.draw(in: circle.insetBy(dx: 2, dy: 8), withAttributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 13, weight: .bold),
+            .foregroundColor: FlowLibraryStyle.primaryText,
+            .paragraphStyle: numberParagraph
+        ])
+
+        let title: String
+        if isImporting {
+            title = "Importing from Photos"
+        } else if selectedCount > 0 {
+            title = "\(selectedCount) selected"
+        } else {
+            title = collectionTitle
+        }
+        title.draw(in: CGRect(x: 58, y: 13, width: bounds.width - 70, height: 18), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 13, weight: .bold),
+            .foregroundColor: FlowLibraryStyle.primaryText
+        ])
+
+        let subtitle = statusMessage ?? {
+            if assetCount == 0 {
+                return "No local Photos assets available"
+            }
+            return selectedCount > 0
+                ? "\(selectedCount) selected from \(assetCount) recent assets"
+                : "\(assetCount) recent Photos assets"
+        }()
+        subtitle.draw(in: CGRect(x: 58, y: 31, width: bounds.width - 70, height: 16), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 11, weight: .regular),
+            .foregroundColor: FlowLibraryStyle.secondaryText
+        ])
+    }
+}
+
+private final class PhotosImportCollectionsView: NSView {
+    var collections: [PhotosImportCollection] = [] {
+        didSet {
+            selectedIndex = min(selectedIndex, max(0, collections.count - 1))
+            reloadData()
+        }
+    }
+    var selectedIndex = 0 {
+        didSet { needsDisplay = true }
+    }
+    var selectionChanged: (() -> Void)?
+
+    private let rowHeight: CGFloat = 46
+    private let gap: CGFloat = 6
+
+    override var isFlipped: Bool { true }
+
+    var selectedCollection: PhotosImportCollection? {
+        guard collections.indices.contains(selectedIndex) else { return nil }
+        return collections[selectedIndex]
+    }
+
+    func reloadData() {
+        let width = max(172, enclosingScrollView?.contentView.bounds.width ?? bounds.width)
+        let count = max(1, collections.count)
+        let height = CGFloat(count) * rowHeight + CGFloat(max(0, count - 1)) * gap + 12
+        setFrameSize(CGSize(width: width, height: max(height, enclosingScrollView?.contentView.bounds.height ?? height)))
+        needsDisplay = true
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        reloadData()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.size.width) > 0.5
+        super.setFrameSize(newSize)
+        if widthChanged {
+            reloadData()
+        } else {
+            needsDisplay = true
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        FlowLibraryStyle.controlPanelFill.setFill()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8).fill()
+        FlowLibraryStyle.controlStroke.setStroke()
+        NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: 8, yRadius: 8).stroke()
+
+        guard !collections.isEmpty else {
+            drawCollectionText("No Collections", subtitle: nil, in: bounds.insetBy(dx: 8, dy: 8), selected: false)
+            return
+        }
+
+        for index in collections.indices {
+            let rect = rowRect(for: index)
+            guard rect.intersects(dirtyRect) else { continue }
+            drawCollection(collections[index], in: rect, selected: index == selectedIndex)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard let index = collectionIndex(at: point), collections.indices.contains(index) else { return }
+        guard index != selectedIndex else { return }
+        selectedIndex = index
+        selectionChanged?()
+    }
+
+    private func drawCollection(_ collection: PhotosImportCollection, in rect: CGRect, selected: Bool) {
+        let row = rect.insetBy(dx: 0.5, dy: 0.5)
+        if selected {
+            FlowLibraryStyle.accent.withAlphaComponent(0.16).setFill()
+            NSBezierPath(roundedRect: row, xRadius: 7, yRadius: 7).fill()
+            FlowLibraryStyle.accent.withAlphaComponent(0.78).setStroke()
+        } else {
+            FlowLibraryStyle.controlFill.withAlphaComponent(0.54).setFill()
+            NSBezierPath(roundedRect: row, xRadius: 7, yRadius: 7).fill()
+            FlowLibraryStyle.controlStroke.setStroke()
+        }
+        let border = NSBezierPath(roundedRect: row, xRadius: 7, yRadius: 7)
+        border.lineWidth = selected ? 1.2 : 1
+        border.stroke()
+        drawCollectionText(collection.title, subtitle: collection.subtitle, in: row, selected: selected)
+    }
+
+    private func drawCollectionText(_ title: String, subtitle: String?, in rect: CGRect, selected: Bool) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        title.draw(in: CGRect(x: rect.minX + 10, y: rect.minY + (subtitle == nil ? 14 : 8), width: rect.width - 20, height: 16), withAttributes: [
+            .font: NSFont.systemFont(ofSize: 12, weight: selected ? .bold : .semibold),
+            .foregroundColor: selected ? FlowLibraryStyle.primaryText : FlowLibraryStyle.primaryText.withAlphaComponent(0.86),
+            .paragraphStyle: paragraph
+        ])
+        if let subtitle {
+            subtitle.draw(in: CGRect(x: rect.minX + 10, y: rect.minY + 25, width: rect.width - 20, height: 14), withAttributes: [
+                .font: NSFont.monospacedDigitSystemFont(ofSize: 10.5, weight: .medium),
+                .foregroundColor: selected ? FlowLibraryStyle.secondaryText.withAlphaComponent(0.86) : FlowLibraryStyle.secondaryText,
+                .paragraphStyle: paragraph
+            ])
+        }
+    }
+
+    private func collectionIndex(at point: CGPoint) -> Int? {
+        for index in collections.indices where rowRect(for: index).contains(point) {
+            return index
+        }
+        return nil
+    }
+
+    private func rowRect(for index: Int) -> CGRect {
+        CGRect(
+            x: 6,
+            y: 6 + CGFloat(index) * (rowHeight + gap),
+            width: max(40, bounds.width - 12),
+            height: rowHeight
+        )
     }
 }
 
@@ -4553,6 +5061,10 @@ private final class FlowHeaderCardView: NSView {
 
 private final class FlowSwitchControl: NSControl {
     var isOn = false {
+        didSet { needsDisplay = true }
+    }
+
+    override var isEnabled: Bool {
         didSet { needsDisplay = true }
     }
 
@@ -4715,10 +5227,95 @@ private final class FlowNumberStepper: NSControl {
     }
 }
 
+private final class FlowSliderControl: NSControl {
+    var minimumValue: Double = 0 {
+        didSet { setDoubleValue(value, notify: false) }
+    }
+    var maximumValue: Double = 1 {
+        didSet { setDoubleValue(value, notify: false) }
+    }
+    private var value: Double = 0
+
+    override var doubleValue: Double {
+        get { value }
+        set { setDoubleValue(newValue, notify: false) }
+    }
+
+    override var isEnabled: Bool {
+        didSet { needsDisplay = true }
+    }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: 180, height: 28)
+    }
+
+    func setDoubleValue(_ newValue: Double, notify: Bool) {
+        value = max(minimumValue, min(maximumValue, newValue))
+        needsDisplay = true
+        if notify {
+            sendAction(action, to: target)
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let alpha: CGFloat = isEnabled ? 1 : 0.42
+        let track = CGRect(x: bounds.minX + 4, y: bounds.midY - 3, width: bounds.width - 8, height: 6)
+        FlowLibraryStyle.controlFill.withAlphaComponent(0.82 * alpha).setFill()
+        NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).fill()
+        FlowLibraryStyle.controlStroke.withAlphaComponent(alpha).setStroke()
+        NSBezierPath(roundedRect: track, xRadius: 3, yRadius: 3).stroke()
+
+        let progress = CGFloat((value - minimumValue) / max(0.0001, maximumValue - minimumValue))
+        let fillWidth = max(6, track.width * progress)
+        let fillRect = CGRect(x: track.minX, y: track.minY, width: fillWidth, height: track.height)
+        FlowLibraryStyle.drawRoundedGradient(
+            in: fillRect,
+            colors: [
+                FlowLibraryStyle.accent.withAlphaComponent(alpha),
+                FlowLibraryStyle.accentBlue.withAlphaComponent(alpha)
+            ],
+            radius: 3
+        )
+
+        let knobDiameter: CGFloat = 18
+        let knobX = track.minX + track.width * progress - knobDiameter / 2
+        let knobRect = CGRect(x: max(bounds.minX + 1, min(bounds.maxX - knobDiameter - 1, knobX)), y: bounds.midY - knobDiameter / 2, width: knobDiameter, height: knobDiameter)
+        NSColor.black.withAlphaComponent(0.26 * alpha).setFill()
+        NSBezierPath(ovalIn: knobRect.insetBy(dx: -1.5, dy: -1.5)).fill()
+        NSColor.white.withAlphaComponent(0.94 * alpha).setFill()
+        NSBezierPath(ovalIn: knobRect).fill()
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
+        updateValue(with: event)
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard isEnabled else { return }
+        updateValue(with: event)
+    }
+
+    private func updateValue(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        let ratio = max(0, min(1, (point.x - 4) / max(1, bounds.width - 8)))
+        setDoubleValue(minimumValue + Double(ratio) * (maximumValue - minimumValue), notify: true)
+    }
+}
+
 private final class FlowActionButton: NSControl {
-    var title: String
+    var title: String {
+        didSet {
+            setAccessibilityLabel(title)
+            needsDisplay = true
+        }
+    }
     var symbolName: String?
     var isAccent: Bool
+
+    override var isEnabled: Bool {
+        didSet { needsDisplay = true }
+    }
 
     init(title: String, symbolName: String?, isAccent: Bool) {
         self.title = title
@@ -4753,13 +5350,15 @@ private final class FlowActionButton: NSControl {
         let font = NSFont.systemFont(ofSize: 13, weight: .semibold)
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
+        paragraph.lineBreakMode = .byTruncatingTail
         var textRect = rect.insetBy(dx: 8, dy: 8)
         if let symbolName {
             let textSize = (title as NSString).size(withAttributes: [.font: font])
-            let totalWidth = min(rect.width - 12, 16 + 6 + textSize.width)
+            let textWidth = min(textSize.width + 2, max(24, rect.width - 16 - 6 - 12))
+            let totalWidth = min(rect.width - 12, 16 + 6 + textWidth)
             let iconRect = CGRect(x: rect.midX - totalWidth / 2, y: rect.midY - 7, width: 14, height: 14)
             drawSymbol(named: symbolName, in: iconRect, color: isEnabled ? textColor : FlowLibraryStyle.tertiaryText)
-            textRect = CGRect(x: iconRect.maxX + 6, y: rect.minY + 8, width: textSize.width + 2, height: 16)
+            textRect = CGRect(x: iconRect.maxX + 6, y: rect.minY + 8, width: textWidth, height: 16)
             paragraph.alignment = .left
         }
         title.draw(in: textRect, withAttributes: [
@@ -4774,6 +5373,50 @@ private final class FlowActionButton: NSControl {
         color.setFill()
 
         switch symbolName {
+        case "arrow.down.to.line":
+            let stem = NSBezierPath()
+            stem.move(to: CGPoint(x: rect.midX, y: rect.minY + 2))
+            stem.line(to: CGPoint(x: rect.midX, y: rect.maxY - 5))
+            stem.lineWidth = 1.6
+            stem.lineCapStyle = .round
+            stem.stroke()
+
+            let arrow = NSBezierPath()
+            arrow.move(to: CGPoint(x: rect.midX - 4, y: rect.maxY - 8))
+            arrow.line(to: CGPoint(x: rect.midX, y: rect.maxY - 4))
+            arrow.line(to: CGPoint(x: rect.midX + 4, y: rect.maxY - 8))
+            arrow.lineWidth = 1.6
+            arrow.lineCapStyle = .round
+            arrow.lineJoinStyle = .round
+            arrow.stroke()
+
+            let baseline = NSBezierPath()
+            baseline.move(to: CGPoint(x: rect.minX + 2, y: rect.maxY - 1.5))
+            baseline.line(to: CGPoint(x: rect.maxX - 2, y: rect.maxY - 1.5))
+            baseline.lineWidth = 1.6
+            baseline.lineCapStyle = .round
+            baseline.stroke()
+        case "arrow.clockwise":
+            let arc = NSBezierPath()
+            arc.appendArc(
+                withCenter: CGPoint(x: rect.midX, y: rect.midY),
+                radius: min(rect.width, rect.height) * 0.36,
+                startAngle: 35,
+                endAngle: 315,
+                clockwise: true
+            )
+            arc.lineWidth = 1.6
+            arc.lineCapStyle = .round
+            arc.stroke()
+            let tip = CGPoint(x: rect.maxX - 2.5, y: rect.midY - 2)
+            let head = NSBezierPath()
+            head.move(to: tip)
+            head.line(to: CGPoint(x: tip.x - 5, y: tip.y - 1))
+            head.move(to: tip)
+            head.line(to: CGPoint(x: tip.x - 2, y: tip.y + 5))
+            head.lineWidth = 1.6
+            head.lineCapStyle = .round
+            head.stroke()
         case "shuffle":
             let top = NSBezierPath()
             top.move(to: CGPoint(x: rect.minX + 1.5, y: rect.minY + 4))
@@ -5030,13 +5673,34 @@ private final class PhotosImportGridView: NSView {
     private var thumbnails: [String: NSImage] = [:]
     private var requestedThumbnails = Set<String>()
     private let imageManager = PHCachingImageManager()
-    private let tileSize = CGSize(width: 104, height: 124)
+    private let minimumTileWidth: CGFloat = 104
     private let gap: CGFloat = 10
+
+    private struct GridMetrics {
+        let columns: Int
+        let tileWidth: CGFloat
+        let tileHeight: CGFloat
+    }
 
     override var isFlipped: Bool { true }
 
     var selectedAssets: [PHAsset] {
         assets.filter { selectedAssetIDs.contains($0.localIdentifier) }
+    }
+
+    override func viewDidMoveToSuperview() {
+        super.viewDidMoveToSuperview()
+        reloadData()
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let widthChanged = abs(newSize.width - frame.size.width) > 0.5
+        super.setFrameSize(newSize)
+        if widthChanged {
+            reloadData()
+        } else {
+            needsDisplay = true
+        }
     }
 
     func clearSelection(notify: Bool = true) {
@@ -5049,10 +5713,10 @@ private final class PhotosImportGridView: NSView {
 
     func reloadData() {
         let width = max(260, enclosingScrollView?.contentView.bounds.width ?? bounds.width)
-        let columns = max(1, Int((width + gap) / (tileSize.width + gap)))
+        let metrics = gridMetrics(for: width)
         let count = max(1, assets.count)
-        let rows = Int(ceil(Double(count) / Double(columns)))
-        let height = CGFloat(rows) * tileSize.height + CGFloat(max(0, rows - 1)) * gap + 12
+        let rows = Int(ceil(Double(count) / Double(metrics.columns)))
+        let height = CGFloat(rows) * metrics.tileHeight + CGFloat(max(0, rows - 1)) * gap + 12
         setFrameSize(CGSize(width: width, height: max(height, enclosingScrollView?.contentView.bounds.height ?? height)))
         needsDisplay = true
     }
@@ -5088,30 +5752,38 @@ private final class PhotosImportGridView: NSView {
     }
 
     private func drawAsset(_ asset: PHAsset, rect: CGRect, selected: Bool) {
-        let background = selected ? NSColor.controlAccentColor.withAlphaComponent(0.20) : NSColor.white.withAlphaComponent(0.055)
+        let background = selected ? FlowLibraryStyle.accent.withAlphaComponent(0.18) : FlowLibraryStyle.cardFill
         background.setFill()
         NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8).fill()
 
         let border = NSBezierPath(roundedRect: rect, xRadius: 8, yRadius: 8)
-        (selected ? NSColor.controlAccentColor : NSColor.white.withAlphaComponent(0.14)).setStroke()
+        (selected ? FlowLibraryStyle.accent : FlowLibraryStyle.controlStroke).setStroke()
         border.lineWidth = selected ? 2 : 1
         border.stroke()
 
-        let imageRect = CGRect(x: rect.minX + 7, y: rect.minY + 7, width: rect.width - 14, height: 86)
-        NSColor.black.withAlphaComponent(0.28).setFill()
-        NSBezierPath(roundedRect: imageRect, xRadius: 6, yRadius: 6).fill()
+        let imageRect = CGRect(x: rect.minX + 7, y: rect.minY + 7, width: rect.width - 14, height: max(70, rect.height - 38))
+        FlowLibraryStyle.controlPanelFill.setFill()
+        let imagePath = NSBezierPath(roundedRect: imageRect, xRadius: 6, yRadius: 6)
+        imagePath.fill()
         if let image = thumbnails[asset.localIdentifier] {
+            NSGraphicsContext.saveGraphicsState()
+            imagePath.setClip()
             drawAspectFill(image, in: imageRect)
+            NSGradient(colors: [
+                NSColor.black.withAlphaComponent(0.02),
+                NSColor.black.withAlphaComponent(0.36)
+            ])?.draw(in: imageRect, angle: 270)
+            NSGraphicsContext.restoreGraphicsState()
         } else {
             requestThumbnail(for: asset, targetSize: imageRect.size)
             drawCentered(asset.mediaType == .video ? "VIDEO" : "PHOTO", in: imageRect)
         }
 
         if asset.mediaType == .video {
-            drawBadge("VIDEO", in: CGRect(x: imageRect.minX + 6, y: imageRect.minY + 6, width: 42, height: 16), color: .systemOrange)
+            drawBadge("VIDEO", in: CGRect(x: imageRect.minX + 6, y: imageRect.minY + 6, width: 42, height: 16), color: NSColor.systemOrange)
         }
         if selected {
-            drawBadge("ADD", in: CGRect(x: imageRect.maxX - 40, y: imageRect.minY + 6, width: 34, height: 16), color: .controlAccentColor)
+            drawBadge("ADD", in: CGRect(x: imageRect.maxX - 40, y: imageRect.minY + 6, width: 34, height: 16), color: FlowLibraryStyle.accent)
         }
 
         let title = asset.creationDate.map { DateFormatter.localizedString(from: $0, dateStyle: .short, timeStyle: .none) } ?? "Photo"
@@ -5120,7 +5792,7 @@ private final class PhotosImportGridView: NSView {
         paragraph.lineBreakMode = .byTruncatingTail
         title.draw(in: CGRect(x: rect.minX + 6, y: imageRect.maxY + 8, width: rect.width - 12, height: 18), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.labelColor.withAlphaComponent(0.86),
+            .foregroundColor: FlowLibraryStyle.primaryText.withAlphaComponent(0.86),
             .paragraphStyle: paragraph
         ])
     }
@@ -5185,7 +5857,7 @@ private final class PhotosImportGridView: NSView {
         paragraph.lineBreakMode = .byTruncatingTail
         text.draw(in: rect.insetBy(dx: 6, dy: max(4, rect.height / 2 - 9)), withAttributes: [
             .font: NSFont.systemFont(ofSize: 11, weight: .medium),
-            .foregroundColor: NSColor.secondaryLabelColor,
+            .foregroundColor: FlowLibraryStyle.secondaryText,
             .paragraphStyle: paragraph
         ])
     }
@@ -5198,15 +5870,24 @@ private final class PhotosImportGridView: NSView {
     }
 
     private func tileRect(for index: Int) -> CGRect {
-        let columns = max(1, Int((max(1, bounds.width) + gap) / (tileSize.width + gap)))
-        let column = index % columns
-        let row = index / columns
+        let metrics = gridMetrics(for: max(1, bounds.width))
+        let column = index % metrics.columns
+        let row = index / metrics.columns
         return CGRect(
-            x: CGFloat(column) * (tileSize.width + gap) + 6,
-            y: CGFloat(row) * (tileSize.height + gap) + 6,
-            width: tileSize.width,
-            height: tileSize.height
+            x: CGFloat(column) * (metrics.tileWidth + gap) + 6,
+            y: CGFloat(row) * (metrics.tileHeight + gap) + 6,
+            width: metrics.tileWidth,
+            height: metrics.tileHeight
         )
+    }
+
+    private func gridMetrics(for width: CGFloat) -> GridMetrics {
+        let usableWidth = max(minimumTileWidth, width - 12)
+        let columns = max(1, Int((usableWidth + gap) / (minimumTileWidth + gap)))
+        let totalGap = CGFloat(max(0, columns - 1)) * gap
+        let tileWidth = floor((usableWidth - totalGap) / CGFloat(columns))
+        let tileHeight = max(124, floor(tileWidth * 0.78) + 38)
+        return GridMetrics(columns: columns, tileWidth: tileWidth, tileHeight: tileHeight)
     }
 }
 
@@ -5982,20 +6663,22 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
     private var pendingExternalOpenURLs: [URL] = []
     private var qualityPanel: NSPanel?
     private var qualityPanelTargetLabel: NSTextField?
-    private var qualityPanelDefaultsButton: NSButton?
-    private var qualityPanelModePopup: NSPopUpButton?
-    private var qualityPanelFrameInterpolationButton: NSButton?
-    private var qualityPanelDenoiseButton: NSButton?
-    private var qualityPanelDenoiseSlider: NSSlider?
+    private var qualityPanelDefaultsButton: FlowSwitchControl?
+    private var qualityPanelModeControl: FlowSegmentedControl?
+    private var qualityPanelFrameInterpolationButton: FlowSwitchControl?
+    private var qualityPanelDenoiseButton: FlowSwitchControl?
+    private var qualityPanelDenoiseSlider: FlowSliderControl?
     private var qualityPanelDenoiseValue: NSTextField?
-    private var qualityPanelToneButton: NSButton?
-    private var qualityPanelToneSlider: NSSlider?
+    private var qualityPanelToneButton: FlowSwitchControl?
+    private var qualityPanelToneSlider: FlowSliderControl?
     private var qualityPanelToneValue: NSTextField?
-    private var qualityPanelMagicButton: NSButton?
-    private var qualityPanelMagicSlider: NSSlider?
+    private var qualityPanelBrightnessSlider: FlowSliderControl?
+    private var qualityPanelBrightnessValue: NSTextField?
+    private var qualityPanelMagicButton: FlowSwitchControl?
+    private var qualityPanelMagicSlider: FlowSliderControl?
     private var qualityPanelMagicValue: NSTextField?
-    private var qualityPanelSplitButton: NSButton?
-    private var qualityPanelSplitReverseButton: NSButton?
+    private var qualityPanelSplitButton: FlowSwitchControl?
+    private var qualityPanelSplitReverseButton: FlowSwitchControl?
     private var flowPanel: NSPanel?
     private var flowGridView: FlowLibraryGridView?
     private var flowHeaderView: FlowHeaderCardView?
@@ -6006,9 +6689,12 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
     private var flowIntervalStepper: FlowNumberStepper?
     private var flowDuplicateButton: FlowSwitchControl?
     private var photosPanel: NSPanel?
+    private var photosCollectionsView: PhotosImportCollectionsView?
     private var photosGridView: PhotosImportGridView?
-    private var photosImportButton: NSButton?
-    private var photosStatusLabel: NSTextField?
+    private var photosHeaderView: PhotosImportHeaderView?
+    private var photosImportButton: FlowActionButton?
+    private var photosRefreshButton: FlowActionButton?
+    private var photosImportInProgress = false
     private let updateService = MediaFlowUpdateService()
     private var checkForUpdatesMenuItem: NSMenuItem?
     private var aboutWindow: NSWindow?
@@ -6022,6 +6708,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
     private var naturalDenoiseMenuItem: NSMenuItem?
     private var magicRescueMenuItem: NSMenuItem?
     private var hoverToolsMenuItem: NSMenuItem?
+    private var debugInformationMenuItem: NSMenuItem?
     private var shortcutMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -6042,6 +6729,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
         )
         window.title = AppMetadata.name
         window.titlebarAppearsTransparent = true
+        window.appearance = NSAppearance(named: .darkAqua)
         window.isReleasedWhenClosed = false
         window.contentView = canvas
         if !WindowFrameStore.restore(window) {
@@ -6218,6 +6906,11 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
         hoverTools.target = self
         hoverTools.state = .off
         hoverToolsMenuItem = hoverTools
+        let debugInformation = viewMenu.addItem(withTitle: "Debug Information", action: #selector(toggleDebugInformation(_:)), keyEquivalent: "")
+        debugInformation.target = self
+        debugInformation.state = canvas?.debugInformationEnabled == true ? .on : .off
+        debugInformation.toolTip = "Show render FPS and MediaFlow CPU usage"
+        debugInformationMenuItem = debugInformation
         viewItem.submenu = viewMenu
         main.addItem(viewItem)
 
@@ -6553,9 +7246,7 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
         if photosPanel == nil {
             photosPanel = makePhotosPanel()
         }
-        let assets = fetchRecentPhotosAssets()
-        photosGridView?.assets = assets
-        syncPhotosImportControls()
+        reloadPhotosBrowser()
         if let window, let photosPanel, !photosPanel.isVisible {
             let x = min(window.frame.maxX - photosPanel.frame.width - 22, max(window.frame.minX + 22, window.frame.midX - photosPanel.frame.width / 2))
             let y = min(window.frame.maxY - photosPanel.frame.height - 46, max(window.frame.minY + 42, window.frame.midY - photosPanel.frame.height / 2))
@@ -6567,75 +7258,132 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
 
     @MainActor private func makePhotosPanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 600),
-            styleMask: [.titled, .closable, .utilityWindow, .resizable],
+            contentRect: NSRect(x: 0, y: 0, width: 760, height: 650),
+            styleMask: [.titled, .closable, .utilityWindow, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.title = "Add From Photos"
+        panel.titleVisibility = .hidden
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.titlebarAppearsTransparent = true
+        panel.minSize = NSSize(width: 640, height: 500)
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let content = NSView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 520, height: 600))
+        let content = FlowPanelBackgroundView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 760, height: 650))
+        content.panelTitle = "Add From Photos"
         content.autoresizingMask = [.width, .height]
-        let stack = NSStackView(frame: content.bounds.insetBy(dx: 16, dy: 14))
+        let stack = NSStackView()
         stack.orientation = .vertical
-        stack.alignment = .leading
+        stack.alignment = .width
+        stack.distribution = .fill
         stack.spacing = 10
-        stack.autoresizingMask = [.width, .height]
+        stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
 
-        let status = NSTextField(labelWithString: "")
-        status.font = .systemFont(ofSize: 11, weight: .medium)
-        status.textColor = .secondaryLabelColor
-        status.widthAnchor.constraint(equalToConstant: 488).isActive = true
-        photosStatusLabel = status
-        stack.addArrangedSubview(status)
+        let header = PhotosImportHeaderView()
+        header.translatesAutoresizingMaskIntoConstraints = false
+        header.heightAnchor.constraint(equalToConstant: 58).isActive = true
+        photosHeaderView = header
+        stack.addArrangedSubview(header)
+        header.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        let browserRow = NSStackView()
+        browserRow.orientation = .horizontal
+        browserRow.alignment = .height
+        browserRow.distribution = .fill
+        browserRow.spacing = 10
+        browserRow.translatesAutoresizingMaskIntoConstraints = false
+
+        let collectionsScroll = NSScrollView()
+        collectionsScroll.borderType = .noBorder
+        collectionsScroll.hasVerticalScroller = true
+        collectionsScroll.drawsBackground = false
+        collectionsScroll.scrollerStyle = .overlay
+        collectionsScroll.translatesAutoresizingMaskIntoConstraints = false
+        collectionsScroll.widthAnchor.constraint(equalToConstant: 184).isActive = true
+        let collectionsView = PhotosImportCollectionsView(frame: NSRect(x: 0, y: 0, width: 184, height: 470))
+        collectionsView.autoresizingMask = [.width]
+        collectionsView.selectionChanged = { [weak self] in
+            self?.loadSelectedPhotosCollection()
+        }
+        photosCollectionsView = collectionsView
+        collectionsScroll.documentView = collectionsView
+        browserRow.addArrangedSubview(collectionsScroll)
 
         let scroll = NSScrollView()
         scroll.borderType = .noBorder
         scroll.hasVerticalScroller = true
         scroll.drawsBackground = false
-        scroll.widthAnchor.constraint(equalToConstant: 488).isActive = true
-        scroll.heightAnchor.constraint(equalToConstant: 470).isActive = true
-        let grid = PhotosImportGridView(frame: NSRect(x: 0, y: 0, width: 488, height: 470))
+        scroll.scrollerStyle = .overlay
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 330).isActive = true
+        let grid = PhotosImportGridView(frame: NSRect(x: 0, y: 0, width: 534, height: 470))
+        grid.autoresizingMask = [.width]
         grid.selectionChanged = { [weak self] in
             self?.syncPhotosImportControls()
         }
         photosGridView = grid
         scroll.documentView = grid
-        stack.addArrangedSubview(scroll)
+        browserRow.addArrangedSubview(scroll)
+        stack.addArrangedSubview(browserRow)
+        browserRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
         let buttonRow = NSStackView()
         buttonRow.orientation = .horizontal
         buttonRow.alignment = .centerY
+        buttonRow.distribution = .fillEqually
         buttonRow.spacing = 8
-        let importButton = NSButton(title: "Import Selected", target: self, action: #selector(importSelectedPhotos))
-        importButton.bezelStyle = .rounded
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        let importButton = FlowActionButton(title: "Import Selected", symbolName: "arrow.down.to.line", isAccent: true)
+        importButton.target = self
+        importButton.action = #selector(importSelectedPhotos)
         importButton.isEnabled = false
+        importButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
         photosImportButton = importButton
         buttonRow.addArrangedSubview(importButton)
-        let refreshButton = NSButton(title: "Refresh", target: self, action: #selector(refreshPhotosPanel))
-        refreshButton.bezelStyle = .rounded
+        let refreshButton = FlowActionButton(title: "Refresh", symbolName: "arrow.clockwise", isAccent: false)
+        refreshButton.target = self
+        refreshButton.action = #selector(refreshPhotosPanel)
+        refreshButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        photosRefreshButton = refreshButton
         buttonRow.addArrangedSubview(refreshButton)
         stack.addArrangedSubview(buttonRow)
+        buttonRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 38),
+            stack.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -16)
+        ])
 
         panel.contentView = content
         return panel
     }
 
-    @MainActor private func fetchRecentPhotosAssets() -> [PHAsset] {
+    @MainActor private func makePhotosFetchOptions(limit: Int = 300) -> PHFetchOptions {
         let options = PHFetchOptions()
-        options.fetchLimit = 300
+        if limit > 0 {
+            options.fetchLimit = limit
+        }
         options.sortDescriptors = [NSSortDescriptor(key: "creationDate", ascending: false)]
         options.predicate = NSPredicate(
             format: "mediaType == %d || mediaType == %d",
             PHAssetMediaType.image.rawValue,
             PHAssetMediaType.video.rawValue
         )
-        let result = PHAsset.fetchAssets(with: options)
+        return options
+    }
+
+    @MainActor private func fetchPhotosAssets(in collection: PHAssetCollection?) -> [PHAsset] {
+        let options = makePhotosFetchOptions()
+        let result = collection.map { PHAsset.fetchAssets(in: $0, options: options) } ?? PHAsset.fetchAssets(with: options)
         var assets: [PHAsset] = []
         assets.reserveCapacity(result.count)
         result.enumerateObjects { asset, _, _ in
@@ -6644,24 +7392,82 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
         return assets
     }
 
-    @MainActor @objc private func refreshPhotosPanel() {
-        photosGridView?.assets = fetchRecentPhotosAssets()
+    @MainActor private func fetchPhotosCollections() -> [PhotosImportCollection] {
+        let countOptions = makePhotosFetchOptions(limit: 0)
+        let allCount = PHAsset.fetchAssets(with: countOptions).count
+        var collections = [
+            PhotosImportCollection(
+                id: "__all_photos__",
+                title: "Photos Library",
+                subtitle: photosAssetCountText(allCount),
+                assetCollection: nil
+            )
+        ]
+        var seenIDs = Set(collections.map(\.id))
+
+        func appendCollections(type: PHAssetCollectionType) {
+            let result = PHAssetCollection.fetchAssetCollections(with: type, subtype: .any, options: nil)
+            result.enumerateObjects { collection, _, _ in
+                guard seenIDs.insert(collection.localIdentifier).inserted else { return }
+                let assets = PHAsset.fetchAssets(in: collection, options: countOptions)
+                guard assets.count > 0 else { return }
+                let title = collection.localizedTitle?.trimmingCharacters(in: .whitespacesAndNewlines)
+                collections.append(PhotosImportCollection(
+                    id: collection.localIdentifier,
+                    title: title?.isEmpty == false ? title! : "Untitled",
+                    subtitle: self.photosAssetCountText(assets.count),
+                    assetCollection: collection
+                ))
+            }
+        }
+
+        appendCollections(type: .smartAlbum)
+        appendCollections(type: .album)
+        return collections
+    }
+
+    @MainActor private func photosAssetCountText(_ count: Int) -> String {
+        count == 1 ? "1 asset" : "\(count) assets"
+    }
+
+    @MainActor private func reloadPhotosBrowser() {
+        let previousID = photosCollectionsView?.selectedCollection?.id
+        let collections = fetchPhotosCollections()
+        photosCollectionsView?.collections = collections
+        if let previousID, let index = collections.firstIndex(where: { $0.id == previousID }) {
+            photosCollectionsView?.selectedIndex = index
+        } else {
+            photosCollectionsView?.selectedIndex = 0
+        }
+        loadSelectedPhotosCollection()
+    }
+
+    @MainActor private func loadSelectedPhotosCollection() {
+        let collection = photosCollectionsView?.selectedCollection
+        photosGridView?.assets = fetchPhotosAssets(in: collection?.assetCollection)
         syncPhotosImportControls()
+    }
+
+    @MainActor @objc private func refreshPhotosPanel() {
+        guard !photosImportInProgress else { return }
+        reloadPhotosBrowser()
     }
 
     @MainActor @objc private func importSelectedPhotos() {
         guard let selectedAssets = photosGridView?.selectedAssets, !selectedAssets.isEmpty else { return }
-        photosImportButton?.isEnabled = false
-        photosStatusLabel?.stringValue = "Importing \(selectedAssets.count) from Photos..."
+        photosImportInProgress = true
+        syncPhotosImportControls(statusMessage: "Importing \(selectedAssets.count) from Photos...")
         PhotosImportStore.importAssets(selectedAssets) { [weak self] urls in
             guard let self else { return }
+            self.photosImportInProgress = false
             if urls.isEmpty {
                 self.syncPhotosImportControls(statusMessage: "No Photos assets were imported.")
                 NSSound.beep()
             } else {
                 self.canvas?.addMediaURLs(urls)
                 self.photosGridView?.clearSelection(notify: false)
-                self.syncPhotosImportControls(statusMessage: "Imported \(urls.count) into MediaFlow.")
+                self.syncPhotosImportControls()
+                self.photosPanel?.close()
             }
         }
     }
@@ -6669,24 +7475,185 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
     @MainActor private func syncPhotosImportControls(statusMessage: String? = nil) {
         let assetCount = photosGridView?.assets.count ?? 0
         let selectedCount = photosGridView?.selectedAssets.count ?? 0
-        if let statusMessage {
-            photosStatusLabel?.stringValue = statusMessage
-        } else {
-            photosStatusLabel?.stringValue = selectedCount > 0
-                ? "\(selectedCount) selected from \(assetCount) recent Photos assets"
-                : "\(assetCount) recent Photos assets"
-        }
-        photosImportButton?.title = selectedCount > 0 ? "Import \(selectedCount) Selected" : "Import Selected"
-        photosImportButton?.isEnabled = selectedCount > 0
+        photosHeaderView?.collectionTitle = photosCollectionsView?.selectedCollection?.title ?? "Photos Library"
+        photosHeaderView?.assetCount = assetCount
+        photosHeaderView?.selectedCount = selectedCount
+        photosHeaderView?.statusMessage = statusMessage
+        photosHeaderView?.isImporting = photosImportInProgress
+        photosImportButton?.title = photosImportInProgress
+            ? "Importing..."
+            : (selectedCount > 0 ? "Import \(selectedCount) Selected" : "Import Selected")
+        photosImportButton?.isEnabled = selectedCount > 0 && !photosImportInProgress
+        photosRefreshButton?.isEnabled = !photosImportInProgress
     }
 
     @MainActor private func showPhotosAccessAlert() {
-        let alert = NSAlert()
-        alert.messageText = "Photos access is not available."
-        alert.informativeText = "Allow MediaFlow to read your Photos library in System Settings, then try Add From Photos again."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "OK")
-        alert.runModal()
+        showFlowStyledMessage(
+            panelTitle: "Photos Access",
+            title: "Photos access is not available.",
+            message: "Allow MediaFlow to read your Photos library in System Settings, then try Add From Photos again."
+        )
+    }
+
+    @MainActor private func showFlowStyledMessage(panelTitle: String, title: String, message: String) {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 380, height: 196),
+            styleMask: [.titled, .utilityWindow, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = panelTitle
+        panel.titleVisibility = .hidden
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.titlebarAppearsTransparent = true
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.isReleasedWhenClosed = false
+
+        let content = FlowPanelBackgroundView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 380, height: 196))
+        content.panelTitle = panelTitle
+        content.autoresizingMask = [.width, .height]
+        panel.contentView = content
+
+        let titleLabel = FlowLibraryStyle.primaryLabel(title)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.alignment = .center
+        titleLabel.maximumNumberOfLines = 2
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(titleLabel)
+
+        let messageLabel = FlowLibraryStyle.secondaryLabel(message)
+        messageLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        messageLabel.alignment = .center
+        messageLabel.maximumNumberOfLines = 3
+        messageLabel.lineBreakMode = .byWordWrapping
+        messageLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(messageLabel)
+
+        let okButton = FlowActionButton(title: "OK", symbolName: nil, isAccent: true)
+        okButton.target = self
+        okButton.action = #selector(dismissFlowStyledMessage(_:))
+        okButton.tag = NSApplication.ModalResponse.OK.rawValue
+        okButton.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(okButton)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+            titleLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+            titleLabel.topAnchor.constraint(equalTo: content.topAnchor, constant: 48),
+            messageLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 30),
+            messageLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -30),
+            messageLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            okButton.centerXAnchor.constraint(equalTo: content.centerXAnchor),
+            okButton.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
+            okButton.widthAnchor.constraint(equalToConstant: 112),
+            okButton.heightAnchor.constraint(equalToConstant: 32)
+        ])
+
+        if let window {
+            panel.center()
+            window.beginSheet(panel) { _ in
+                panel.close()
+            }
+        } else {
+            panel.center()
+            panel.makeKeyAndOrderFront(nil)
+            NSApp.runModal(for: panel)
+            panel.close()
+        }
+    }
+
+    @MainActor private func showFlowStyledConfirmation(
+        panelTitle: String,
+        title: String,
+        message: String,
+        confirmTitle: String,
+        cancelTitle: String
+    ) -> Bool {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 220),
+            styleMask: [.titled, .utilityWindow, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        panel.title = panelTitle
+        panel.titleVisibility = .hidden
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.titlebarAppearsTransparent = true
+        panel.appearance = NSAppearance(named: .darkAqua)
+        panel.isReleasedWhenClosed = false
+
+        let content = FlowPanelBackgroundView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 420, height: 220))
+        content.panelTitle = panelTitle
+        content.autoresizingMask = [.width, .height]
+        panel.contentView = content
+
+        let titleLabel = FlowLibraryStyle.primaryLabel(title)
+        titleLabel.font = .systemFont(ofSize: 14, weight: .semibold)
+        titleLabel.alignment = .center
+        titleLabel.maximumNumberOfLines = 2
+        titleLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(titleLabel)
+
+        let messageLabel = FlowLibraryStyle.secondaryLabel(message)
+        messageLabel.font = .systemFont(ofSize: 12, weight: .regular)
+        messageLabel.alignment = .center
+        messageLabel.maximumNumberOfLines = 3
+        messageLabel.lineBreakMode = .byWordWrapping
+        messageLabel.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(messageLabel)
+
+        let buttonRow = NSStackView()
+        buttonRow.orientation = .horizontal
+        buttonRow.alignment = .centerY
+        buttonRow.distribution = .fillEqually
+        buttonRow.spacing = 8
+        buttonRow.translatesAutoresizingMaskIntoConstraints = false
+        content.addSubview(buttonRow)
+
+        let cancelButton = FlowActionButton(title: cancelTitle, symbolName: nil, isAccent: false)
+        cancelButton.target = self
+        cancelButton.action = #selector(dismissFlowStyledMessage(_:))
+        cancelButton.tag = NSApplication.ModalResponse.alertSecondButtonReturn.rawValue
+        cancelButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        buttonRow.addArrangedSubview(cancelButton)
+
+        let confirmButton = FlowActionButton(title: confirmTitle, symbolName: nil, isAccent: true)
+        confirmButton.target = self
+        confirmButton.action = #selector(dismissFlowStyledMessage(_:))
+        confirmButton.tag = NSApplication.ModalResponse.alertFirstButtonReturn.rawValue
+        confirmButton.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        buttonRow.addArrangedSubview(confirmButton)
+
+        NSLayoutConstraint.activate([
+            titleLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+            titleLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+            titleLabel.topAnchor.constraint(equalTo: content.topAnchor, constant: 50),
+            messageLabel.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 30),
+            messageLabel.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -30),
+            messageLabel.topAnchor.constraint(equalTo: titleLabel.bottomAnchor, constant: 8),
+            buttonRow.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 28),
+            buttonRow.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -28),
+            buttonRow.bottomAnchor.constraint(equalTo: content.bottomAnchor, constant: -18),
+            buttonRow.heightAnchor.constraint(equalToConstant: 32)
+        ])
+
+        panel.center()
+        panel.makeKeyAndOrderFront(nil)
+        let response = NSApp.runModal(for: panel)
+        panel.close()
+        return response == .alertFirstButtonReturn
+    }
+
+    @MainActor @objc private func dismissFlowStyledMessage(_ sender: NSControl) {
+        guard let modalWindow = sender.window else { return }
+        let response = NSApplication.ModalResponse(rawValue: sender.tag)
+        if modalWindow.sheetParent != nil {
+            modalWindow.sheetParent?.endSheet(modalWindow, returnCode: response)
+        } else {
+            NSApp.stopModal(withCode: response)
+        }
     }
 
     @MainActor @objc private func showFlowPanel() {
@@ -6920,115 +7887,157 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
 
     @MainActor private func makeQualityPanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 360, height: 446),
-            styleMask: [.titled, .closable, .utilityWindow],
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: 650),
+            styleMask: [.titled, .closable, .utilityWindow, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
         panel.title = "Quality Controls"
+        panel.titleVisibility = .hidden
+        panel.backgroundColor = .clear
+        panel.isOpaque = false
+        panel.titlebarAppearsTransparent = true
+        panel.minSize = NSSize(width: 390, height: 590)
+        panel.appearance = NSAppearance(named: .darkAqua)
         panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let content = NSView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 360, height: 446))
+        let content = FlowPanelBackgroundView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 430, height: 650))
+        content.panelTitle = "Quality Controls"
         content.autoresizingMask = [.width, .height]
-        let stack = NSStackView(frame: content.bounds.insetBy(dx: 16, dy: 14))
+        let stack = NSStackView()
         stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 10
-        stack.autoresizingMask = [.width, .height]
+        stack.alignment = .width
+        stack.distribution = .fill
+        stack.spacing = 8
+        stack.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(stack)
 
-        let targetLabel = NSTextField(labelWithString: "Target: Defaults for new files")
-        targetLabel.font = .systemFont(ofSize: 11, weight: .medium)
-        targetLabel.textColor = .secondaryLabelColor
-        targetLabel.lineBreakMode = .byTruncatingMiddle
-        targetLabel.widthAnchor.constraint(equalToConstant: 320).isActive = true
-        qualityPanelTargetLabel = targetLabel
-        stack.addArrangedSubview(targetLabel)
+        func addFullWidth(_ view: NSView) {
+            view.translatesAutoresizingMaskIntoConstraints = false
+            stack.addArrangedSubview(view)
+            view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+        }
 
-        let defaultsButton = NSButton(checkboxWithTitle: "Edit Defaults for New Files", target: self, action: #selector(qualityPanelDefaultsChanged(_:)))
+        addFullWidth(FlowLibraryStyle.sectionLabel("Target"))
+        let targetLabel = FlowLibraryStyle.secondaryLabel("Target: Defaults for new files")
+        targetLabel.font = .systemFont(ofSize: 12, weight: .medium)
+        targetLabel.lineBreakMode = .byTruncatingMiddle
+        qualityPanelTargetLabel = targetLabel
+        addFullWidth(targetLabel)
+
+        let defaultsButton = FlowSwitchControl()
+        defaultsButton.target = self
+        defaultsButton.action = #selector(qualityPanelDefaultsChanged(_:))
         defaultsButton.toolTip = "Edit fallback quality settings used before a file has its own saved hash profile"
         qualityPanelDefaultsButton = defaultsButton
-        stack.addArrangedSubview(defaultsButton)
+        addFullWidth(qualitySettingRow(title: "Edit Defaults", subtitle: "For new files", trailing: defaultsButton))
 
-        let modePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-        for mode in MetalQualityMode.allCases {
-            modePopup.addItem(withTitle: mode.displayName)
-            modePopup.lastItem?.representedObject = mode.rawValue
-            modePopup.lastItem?.toolTip = mode.tooltip
-        }
-        modePopup.target = self
-        modePopup.action = #selector(qualityPanelModeChanged(_:))
-        modePopup.widthAnchor.constraint(equalToConstant: 190).isActive = true
-        qualityPanelModePopup = modePopup
-        stack.addArrangedSubview(controlRow("Sampling", modePopup))
+        addFullWidth(qualitySeparator())
+        addFullWidth(FlowLibraryStyle.sectionLabel("Sampling"))
+        let modeControl = FlowSegmentedControl()
+        modeControl.segments = MetalQualityMode.allCases.map(\.displayName)
+        modeControl.target = self
+        modeControl.action = #selector(qualityPanelModeChanged(_:))
+        modeControl.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        qualityPanelModeControl = modeControl
+        addFullWidth(modeControl)
 
-        let frameInterpolation = NSButton(checkboxWithTitle: "Frame Interpolation", target: self, action: #selector(qualityPanelFrameInterpolationChanged(_:)))
+        addFullWidth(qualitySeparator())
+        addFullWidth(FlowLibraryStyle.sectionLabel("Processing"))
+        let frameInterpolation = FlowSwitchControl()
+        frameInterpolation.target = self
+        frameInterpolation.action = #selector(qualityPanelFrameInterpolationChanged(_:))
         qualityPanelFrameInterpolationButton = frameInterpolation
-        stack.addArrangedSubview(frameInterpolation)
+        addFullWidth(qualitySettingRow(title: "Frame Interpolation", subtitle: "Smooth speed changes", trailing: frameInterpolation))
 
-        let denoise = NSButton(checkboxWithTitle: "Natural Denoise + Detail", target: self, action: #selector(qualityPanelDenoiseChanged(_:)))
+        let denoise = FlowSwitchControl()
+        denoise.target = self
+        denoise.action = #selector(qualityPanelDenoiseChanged(_:))
         qualityPanelDenoiseButton = denoise
-        stack.addArrangedSubview(denoise)
+        addFullWidth(qualitySettingRow(title: "Natural Denoise", subtitle: "Edge-aware detail", trailing: denoise))
 
-        let denoiseSlider = NSSlider(value: 0.72, minValue: 0, maxValue: 1, target: self, action: #selector(qualityPanelDenoiseStrengthChanged(_:)))
-        denoiseSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
-        let denoiseValue = NSTextField(labelWithString: "72%")
-        denoiseValue.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        denoiseValue.textColor = .secondaryLabelColor
-        denoiseValue.alignment = .right
-        denoiseValue.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        let denoiseSlider = FlowSliderControl()
+        denoiseSlider.doubleValue = 0.72
+        denoiseSlider.target = self
+        denoiseSlider.action = #selector(qualityPanelDenoiseStrengthChanged(_:))
+        let denoiseValue = qualityValueLabel("72%")
         qualityPanelDenoiseSlider = denoiseSlider
         qualityPanelDenoiseValue = denoiseValue
-        stack.addArrangedSubview(sliderRow("Noise", denoiseSlider, denoiseValue))
+        addFullWidth(qualitySliderRow("Noise", denoiseSlider, denoiseValue))
 
-        let tone = NSButton(checkboxWithTitle: "Auto Tone / Detail Recovery", target: self, action: #selector(qualityPanelToneChanged(_:)))
+        let tone = FlowSwitchControl()
+        tone.target = self
+        tone.action = #selector(qualityPanelToneChanged(_:))
         qualityPanelToneButton = tone
-        stack.addArrangedSubview(tone)
+        addFullWidth(qualitySettingRow(title: "Auto Tone", subtitle: "Recover detail", trailing: tone))
 
-        let toneSlider = NSSlider(value: 0.58, minValue: 0, maxValue: 1, target: self, action: #selector(qualityPanelToneStrengthChanged(_:)))
-        toneSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
-        let toneValue = NSTextField(labelWithString: "58%")
-        toneValue.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        toneValue.textColor = .secondaryLabelColor
-        toneValue.alignment = .right
-        toneValue.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        let toneSlider = FlowSliderControl()
+        toneSlider.doubleValue = 0.58
+        toneSlider.target = self
+        toneSlider.action = #selector(qualityPanelToneStrengthChanged(_:))
+        let toneValue = qualityValueLabel("58%")
         qualityPanelToneSlider = toneSlider
         qualityPanelToneValue = toneValue
-        stack.addArrangedSubview(sliderRow("Tone", toneSlider, toneValue))
+        addFullWidth(qualitySliderRow("Tone", toneSlider, toneValue))
 
-        let magic = NSButton(checkboxWithTitle: "Magic Rescue", target: self, action: #selector(qualityPanelMagicChanged(_:)))
+        let brightnessSlider = FlowSliderControl()
+        brightnessSlider.doubleValue = 0
+        brightnessSlider.target = self
+        brightnessSlider.action = #selector(qualityPanelBrightnessChanged(_:))
+        brightnessSlider.toolTip = "Boosts exposure, shadows, midtone contrast, and vibrance together"
+        let brightnessValue = qualityValueLabel("0%")
+        qualityPanelBrightnessSlider = brightnessSlider
+        qualityPanelBrightnessValue = brightnessValue
+        addFullWidth(qualitySliderRow("Bright", brightnessSlider, brightnessValue))
+
+        let magic = FlowSwitchControl()
+        magic.target = self
+        magic.action = #selector(qualityPanelMagicChanged(_:))
         magic.toolTip = "Aggressive shadow/highlight rescue, local contrast, vibrance, and sharpening"
         qualityPanelMagicButton = magic
-        stack.addArrangedSubview(magic)
+        addFullWidth(qualitySettingRow(title: "Magic Rescue", subtitle: "Aggressive recovery", trailing: magic))
 
-        let magicSlider = NSSlider(value: 0.82, minValue: 0, maxValue: 1, target: self, action: #selector(qualityPanelMagicStrengthChanged(_:)))
-        magicSlider.widthAnchor.constraint(equalToConstant: 180).isActive = true
+        let magicSlider = FlowSliderControl()
+        magicSlider.doubleValue = 0.82
+        magicSlider.target = self
+        magicSlider.action = #selector(qualityPanelMagicStrengthChanged(_:))
         magicSlider.toolTip = "Magic Rescue strength"
-        let magicValue = NSTextField(labelWithString: "82%")
-        magicValue.font = .monospacedDigitSystemFont(ofSize: 11, weight: .regular)
-        magicValue.textColor = .secondaryLabelColor
-        magicValue.alignment = .right
-        magicValue.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        let magicValue = qualityValueLabel("82%")
         qualityPanelMagicSlider = magicSlider
         qualityPanelMagicValue = magicValue
-        stack.addArrangedSubview(sliderRow("Magic", magicSlider, magicValue))
+        addFullWidth(qualitySliderRow("Magic", magicSlider, magicValue))
 
-        let split = NSButton(checkboxWithTitle: "Split Compare", target: self, action: #selector(qualityPanelSplitCompareChanged(_:)))
+        addFullWidth(qualitySeparator())
+        addFullWidth(FlowLibraryStyle.sectionLabel("Compare"))
+        let split = FlowSwitchControl()
+        split.target = self
+        split.action = #selector(qualityPanelSplitCompareChanged(_:))
         qualityPanelSplitButton = split
-        stack.addArrangedSubview(split)
+        addFullWidth(qualitySettingRow(title: "Split Compare", subtitle: "Raw vs quality", trailing: split))
 
-        let splitReverse = NSButton(checkboxWithTitle: "B/A Compare", target: self, action: #selector(qualityPanelSplitReverseChanged(_:)))
+        let splitReverse = FlowSwitchControl()
+        splitReverse.target = self
+        splitReverse.action = #selector(qualityPanelSplitReverseChanged(_:))
         splitReverse.toolTip = "Swap split compare: B Quality on the left, A Raw on the right"
         qualityPanelSplitReverseButton = splitReverse
-        stack.addArrangedSubview(splitReverse)
+        addFullWidth(qualitySettingRow(title: "B/A Compare", subtitle: "Swap sides", trailing: splitReverse))
 
-        let clearProfiles = NSButton(title: "Clear Saved File Profiles...", target: self, action: #selector(clearSavedFileProfilesFromPanel))
-        clearProfiles.bezelStyle = .rounded
+        let clearProfiles = FlowActionButton(title: "Clear Saved File Profiles...", symbolName: nil, isAccent: false)
+        clearProfiles.target = self
+        clearProfiles.action = #selector(clearSavedFileProfilesFromPanel)
         clearProfiles.toolTip = "Clear saved per-file quality profiles and A-B histories"
-        stack.addArrangedSubview(clearProfiles)
+        clearProfiles.heightAnchor.constraint(equalToConstant: 32).isActive = true
+        addFullWidth(clearProfiles)
+
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: content.leadingAnchor, constant: 16),
+            stack.trailingAnchor.constraint(equalTo: content.trailingAnchor, constant: -16),
+            stack.topAnchor.constraint(equalTo: content.topAnchor, constant: 38),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: content.bottomAnchor, constant: -16)
+        ])
 
         panel.contentView = content
         if let window {
@@ -7038,86 +8047,113 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
         return panel
     }
 
-    @MainActor private func controlRow(_ title: String, _ control: NSView) -> NSStackView {
+    @MainActor private func qualitySettingRow(title: String, subtitle: String?, trailing: NSView) -> NSStackView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
-        row.spacing = 10
-        let label = NSTextField(labelWithString: title)
-        label.textColor = .secondaryLabelColor
-        label.widthAnchor.constraint(equalToConstant: 82).isActive = true
-        row.addArrangedSubview(label)
-        row.addArrangedSubview(control)
+        row.spacing = 8
+        row.heightAnchor.constraint(equalToConstant: 36).isActive = true
+
+        let textStack = NSStackView()
+        textStack.orientation = .vertical
+        textStack.alignment = .leading
+        textStack.spacing = 0
+        textStack.addArrangedSubview(FlowLibraryStyle.primaryLabel(title))
+        if let subtitle {
+            textStack.addArrangedSubview(FlowLibraryStyle.secondaryLabel(subtitle))
+        }
+        row.addArrangedSubview(textStack)
+        row.addArrangedSubview(NSView())
+        row.addArrangedSubview(trailing)
         return row
     }
 
-    @MainActor private func sliderRow(_ title: String, _ slider: NSSlider, _ value: NSTextField) -> NSStackView {
+    @MainActor private func qualitySliderRow(_ title: String, _ slider: FlowSliderControl, _ value: NSTextField) -> NSStackView {
         let row = NSStackView()
         row.orientation = .horizontal
         row.alignment = .centerY
         row.spacing = 10
-        let label = NSTextField(labelWithString: title)
-        label.textColor = .secondaryLabelColor
-        label.widthAnchor.constraint(equalToConstant: 82).isActive = true
+        row.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        let label = FlowLibraryStyle.secondaryLabel(title)
+        label.widthAnchor.constraint(equalToConstant: 54).isActive = true
         row.addArrangedSubview(label)
+        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
         row.addArrangedSubview(slider)
         row.addArrangedSubview(value)
         return row
     }
 
-    @MainActor @objc private func qualityPanelModeChanged(_ sender: NSPopUpButton) {
-        let rawValue = sender.selectedItem?.representedObject as? Int ?? sender.indexOfSelectedItem
+    @MainActor private func qualityValueLabel(_ text: String) -> NSTextField {
+        let label = FlowLibraryStyle.secondaryLabel(text)
+        label.font = .monospacedDigitSystemFont(ofSize: 11, weight: .medium)
+        label.alignment = .right
+        label.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        return label
+    }
+
+    @MainActor private func qualitySeparator() -> NSView {
+        let separator = NSBox()
+        separator.boxType = .separator
+        return separator
+    }
+
+    @MainActor @objc private func qualityPanelModeChanged(_ sender: FlowSegmentedControl) {
+        let rawValue = sender.selectedIndex
         canvas?.setMetalQualityMode(MetalQualityMode(rawValue: rawValue) ?? .best)
     }
 
-    @MainActor @objc private func qualityPanelDefaultsChanged(_ sender: NSButton) {
-        canvas?.setQualityEditsDefaults(sender.state == .on)
+    @MainActor @objc private func qualityPanelDefaultsChanged(_ sender: FlowSwitchControl) {
+        canvas?.setQualityEditsDefaults(sender.isOn)
     }
 
-    @MainActor @objc private func qualityPanelFrameInterpolationChanged(_ sender: NSButton) {
-        canvas?.setFrameInterpolationEnabled(sender.state == .on)
+    @MainActor @objc private func qualityPanelFrameInterpolationChanged(_ sender: FlowSwitchControl) {
+        canvas?.setFrameInterpolationEnabled(sender.isOn)
     }
 
-    @MainActor @objc private func qualityPanelDenoiseChanged(_ sender: NSButton) {
-        canvas?.setNaturalDenoiseEnabled(sender.state == .on)
+    @MainActor @objc private func qualityPanelDenoiseChanged(_ sender: FlowSwitchControl) {
+        canvas?.setNaturalDenoiseEnabled(sender.isOn)
     }
 
-    @MainActor @objc private func qualityPanelDenoiseStrengthChanged(_ sender: NSSlider) {
+    @MainActor @objc private func qualityPanelDenoiseStrengthChanged(_ sender: FlowSliderControl) {
         canvas?.setNaturalDenoiseStrength(Float(sender.doubleValue))
     }
 
-    @MainActor @objc private func qualityPanelToneChanged(_ sender: NSButton) {
-        canvas?.setToneRecoveryEnabled(sender.state == .on)
+    @MainActor @objc private func qualityPanelToneChanged(_ sender: FlowSwitchControl) {
+        canvas?.setToneRecoveryEnabled(sender.isOn)
     }
 
-    @MainActor @objc private func qualityPanelToneStrengthChanged(_ sender: NSSlider) {
+    @MainActor @objc private func qualityPanelToneStrengthChanged(_ sender: FlowSliderControl) {
         canvas?.setToneRecoveryStrength(Float(sender.doubleValue))
     }
 
-    @MainActor @objc private func qualityPanelMagicChanged(_ sender: NSButton) {
-        canvas?.setMagicRescueMode(sender.state == .on)
+    @MainActor @objc private func qualityPanelBrightnessChanged(_ sender: FlowSliderControl) {
+        canvas?.setBrightnessBoost(Float(sender.doubleValue))
     }
 
-    @MainActor @objc private func qualityPanelMagicStrengthChanged(_ sender: NSSlider) {
+    @MainActor @objc private func qualityPanelMagicChanged(_ sender: FlowSwitchControl) {
+        canvas?.setMagicRescueMode(sender.isOn)
+    }
+
+    @MainActor @objc private func qualityPanelMagicStrengthChanged(_ sender: FlowSliderControl) {
         canvas?.setMagicRescueStrength(Float(sender.doubleValue))
     }
 
-    @MainActor @objc private func qualityPanelSplitCompareChanged(_ sender: NSButton) {
-        canvas?.setSplitCompareEnabled(sender.state == .on)
+    @MainActor @objc private func qualityPanelSplitCompareChanged(_ sender: FlowSwitchControl) {
+        canvas?.setSplitCompareEnabled(sender.isOn)
     }
 
-    @MainActor @objc private func qualityPanelSplitReverseChanged(_ sender: NSButton) {
-        canvas?.setSplitCompareReversed(sender.state == .on)
+    @MainActor @objc private func qualityPanelSplitReverseChanged(_ sender: FlowSwitchControl) {
+        canvas?.setSplitCompareReversed(sender.isOn)
     }
 
     @MainActor @objc private func clearSavedFileProfilesFromPanel() {
-        let alert = NSAlert()
-        alert.messageText = "Clear saved file profiles?"
-        alert.informativeText = "This clears all per-file quality profiles and A-B histories saved by file hash. Current open files stay loaded."
-        alert.alertStyle = .warning
-        alert.addButton(withTitle: "Clear")
-        alert.addButton(withTitle: "Cancel")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        guard showFlowStyledConfirmation(
+            panelTitle: "Quality Profiles",
+            title: "Clear saved file profiles?",
+            message: "This clears all per-file quality profiles and A-B histories saved by file hash. Current open files stay loaded.",
+            confirmTitle: "Clear",
+            cancelTitle: "Cancel"
+        ) else { return }
         canvas?.clearSavedFileProfiles()
         syncQualityControls()
     }
@@ -7126,24 +8162,26 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
         guard let canvas else { return }
         rebuildQualityMenu()
         qualityPanelTargetLabel?.stringValue = "Target: \(canvas.activeQualityTargetName())"
-        qualityPanelDefaultsButton?.state = canvas.isEditingQualityDefaults() ? .on : .off
+        qualityPanelDefaultsButton?.isOn = canvas.isEditingQualityDefaults()
         qualityPanelDefaultsButton?.isEnabled = canvas.hasQualityTargetItem()
-        qualityPanelModePopup?.selectItem(at: canvas.activeMetalQualityMode().rawValue)
-        qualityPanelFrameInterpolationButton?.state = canvas.activeFrameInterpolationEnabled() ? .on : .off
-        qualityPanelDenoiseButton?.state = canvas.activeNaturalDenoiseEnabled() ? .on : .off
+        qualityPanelModeControl?.selectedIndex = canvas.activeMetalQualityMode().rawValue
+        qualityPanelFrameInterpolationButton?.isOn = canvas.activeFrameInterpolationEnabled()
+        qualityPanelDenoiseButton?.isOn = canvas.activeNaturalDenoiseEnabled()
         qualityPanelDenoiseSlider?.doubleValue = Double(canvas.activeNaturalDenoiseStrength())
         qualityPanelDenoiseSlider?.isEnabled = canvas.activeNaturalDenoiseEnabled()
         qualityPanelDenoiseValue?.stringValue = percent(canvas.activeNaturalDenoiseStrength())
-        qualityPanelToneButton?.state = canvas.activeToneRecoveryEnabled() ? .on : .off
+        qualityPanelToneButton?.isOn = canvas.activeToneRecoveryEnabled()
         qualityPanelToneSlider?.doubleValue = Double(canvas.activeToneRecoveryStrength())
         qualityPanelToneSlider?.isEnabled = canvas.activeToneRecoveryEnabled()
         qualityPanelToneValue?.stringValue = percent(canvas.activeToneRecoveryStrength())
-        qualityPanelMagicButton?.state = canvas.activeMagicRescueEnabled() ? .on : .off
+        qualityPanelBrightnessSlider?.doubleValue = Double(canvas.activeBrightnessBoost())
+        qualityPanelBrightnessValue?.stringValue = percent(canvas.activeBrightnessBoost())
+        qualityPanelMagicButton?.isOn = canvas.activeMagicRescueEnabled()
         qualityPanelMagicSlider?.doubleValue = Double(canvas.activeMagicRescueStrength())
         qualityPanelMagicSlider?.isEnabled = canvas.activeMagicRescueEnabled()
         qualityPanelMagicValue?.stringValue = percent(canvas.activeMagicRescueStrength())
-        qualityPanelSplitButton?.state = canvas.splitCompareEnabled ? .on : .off
-        qualityPanelSplitReverseButton?.state = canvas.splitCompareReversed ? .on : .off
+        qualityPanelSplitButton?.isOn = canvas.splitCompareEnabled
+        qualityPanelSplitReverseButton?.isOn = canvas.splitCompareReversed
         qualityPanelSplitReverseButton?.isEnabled = canvas.splitCompareEnabled
         frameInterpolationMenuItem?.state = canvas.activeFrameInterpolationEnabled() ? .on : .off
         naturalDenoiseMenuItem?.state = canvas.activeNaturalDenoiseEnabled() ? .on : .off
@@ -7237,6 +8275,14 @@ private final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sen
         canvas.setHoverToolPanelEnabled(enabled)
         sender.state = enabled ? .on : .off
         hoverToolsMenuItem?.state = sender.state
+    }
+
+    @MainActor @objc private func toggleDebugInformation(_ sender: NSMenuItem) {
+        guard let canvas else { return }
+        let enabled = !canvas.debugInformationEnabled
+        canvas.setDebugInformationEnabled(enabled)
+        sender.state = enabled ? .on : .off
+        debugInformationMenuItem?.state = sender.state
     }
 }
 
