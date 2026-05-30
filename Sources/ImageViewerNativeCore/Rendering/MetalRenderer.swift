@@ -147,8 +147,9 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             var canBlendFromCurrentTexture = false
             if let lastItemTime, itemTime.isFinite {
                 let frameDelta = itemTime - lastItemTime
+                let frameDistance = abs(frameDelta)
                 let maxBlendGap = max(0.08, item.videoNominalFrameDuration * 4.0)
-                canBlendFromCurrentTexture = frameDelta > 0.0001 && frameDelta <= maxBlendGap
+                canBlendFromCurrentTexture = frameDistance > 0.0001 && frameDistance <= maxBlendGap
             }
 
             if canBlendFromCurrentTexture, let current = item.texture {

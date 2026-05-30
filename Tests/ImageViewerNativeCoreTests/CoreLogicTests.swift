@@ -139,4 +139,20 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(forwardAtStart.target, 1.0, accuracy: 0.001)
         XCTAssertEqual(forwardAtStart.direction, 1)
     }
+
+    func testSwingPlaybackRateUsesReverseDirection() {
+        let item = CollageItem(
+            url: URL(fileURLWithPath: "/tmp/example.mov"),
+            kind: .video,
+            pixelSize: CGSize(width: 1920, height: 1080),
+            texture: nil
+        )
+
+        item.playbackMode = .swing
+        item.speed = 1.25
+        item.swingDirection = -1
+
+        XCTAssertEqual(item.playbackRate, -1.25, accuracy: 0.001)
+        XCTAssertEqual(item.normalizedSwingDirection, -1)
+    }
 }
