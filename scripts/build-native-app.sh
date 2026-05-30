@@ -84,6 +84,18 @@ cat > "$APP/Contents/Info.plist" <<PLIST
         <string>public.video</string>
       </array>
     </dict>
+    <dict>
+      <key>CFBundleTypeName</key>
+      <string>MediaFlow Playback</string>
+      <key>CFBundleTypeRole</key>
+      <string>Editor</string>
+      <key>LSHandlerRank</key>
+      <string>Owner</string>
+      <key>LSItemContentTypes</key>
+      <array>
+        <string>com.kibermaks.mediaflow.playback</string>
+      </array>
+    </dict>
   </array>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
@@ -101,6 +113,28 @@ cat > "$APP/Contents/Info.plist" <<PLIST
   <true/>
   <key>NSPhotoLibraryUsageDescription</key>
   <string>MediaFlow imports selected photos and videos into local playback walls.</string>
+  <key>UTExportedTypeDeclarations</key>
+  <array>
+    <dict>
+      <key>UTTypeIdentifier</key>
+      <string>com.kibermaks.mediaflow.playback</string>
+      <key>UTTypeDescription</key>
+      <string>MediaFlow Playback</string>
+      <key>UTTypeConformsTo</key>
+      <array>
+        <string>public.data</string>
+      </array>
+      <key>UTTypeTagSpecification</key>
+      <dict>
+        <key>public.filename-extension</key>
+        <array>
+          <string>ivplayback</string>
+        </array>
+        <key>public.mime-type</key>
+        <string>application/x-mediaflow-playback</string>
+      </dict>
+    </dict>
+  </array>
 </dict>
 </plist>
 PLIST

@@ -165,7 +165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
         }
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        canvas.replacePlayback(withMediaURLs: urls)
+        let playbackURLs = urls.filter(PlaybackFile.isPlaybackURL)
+        let mediaURLs = urls.filter { !PlaybackFile.isPlaybackURL($0) }
+        if let playbackURL = playbackURLs.first {
+            canvas.loadPlayback(from: playbackURL, addToRecents: true)
+            if !mediaURLs.isEmpty {
+                canvas.loadMedia(urls: mediaURLs)
+            }
+        } else {
+            canvas.replacePlayback(withMediaURLs: mediaURLs)
+        }
     }
 
     @MainActor func configureUpdateService() {

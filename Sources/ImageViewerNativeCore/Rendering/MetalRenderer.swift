@@ -243,18 +243,25 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
         let u1 = Float(texRect.maxX)
         let v0 = Float(texRect.minY)
         let v1 = Float(texRect.maxY)
-        let uvTopLeft = textureCoordinate(for: item, u: u0, v: v0)
-        let uvTopRight = textureCoordinate(for: item, u: u1, v: v0)
-        let uvBottomLeft = textureCoordinate(for: item, u: u0, v: v1)
-        let uvBottomRight = textureCoordinate(for: item, u: u1, v: v1)
+        let sourceTopLeft = textureCoordinate(for: item, u: u0, v: v0)
+        let sourceTopRight = textureCoordinate(for: item, u: u1, v: v0)
+        let sourceBottomLeft = textureCoordinate(for: item, u: u0, v: v1)
+        let sourceBottomRight = textureCoordinate(for: item, u: u1, v: v1)
+        let uv = rotatedTextureCorners(
+            for: item,
+            sourceTopLeft: sourceTopLeft,
+            sourceTopRight: sourceTopRight,
+            sourceBottomLeft: sourceBottomLeft,
+            sourceBottomRight: sourceBottomRight
+        )
 
         var vertices = [
-            MetalVertex(position: SIMD2(minX, minY), texCoord: uvBottomLeft),
-            MetalVertex(position: SIMD2(maxX, minY), texCoord: uvBottomRight),
-            MetalVertex(position: SIMD2(minX, maxY), texCoord: uvTopLeft),
-            MetalVertex(position: SIMD2(maxX, minY), texCoord: uvBottomRight),
-            MetalVertex(position: SIMD2(maxX, maxY), texCoord: uvTopRight),
-            MetalVertex(position: SIMD2(minX, maxY), texCoord: uvTopLeft)
+            MetalVertex(position: SIMD2(minX, minY), texCoord: uv.bottomLeft),
+            MetalVertex(position: SIMD2(maxX, minY), texCoord: uv.bottomRight),
+            MetalVertex(position: SIMD2(minX, maxY), texCoord: uv.topLeft),
+            MetalVertex(position: SIMD2(maxX, minY), texCoord: uv.bottomRight),
+            MetalVertex(position: SIMD2(maxX, maxY), texCoord: uv.topRight),
+            MetalVertex(position: SIMD2(minX, maxY), texCoord: uv.topLeft)
         ]
 
         encoder.setFragmentTexture(texture, index: 0)
@@ -269,6 +276,45 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             return SIMD2(u, v)
         }
         return mapping.textureCoordinate(displayUV: SIMD2(u, v))
+    }
+
+    private func rotatedTextureCorners(
+        for item: CollageItem,
+        sourceTopLeft: SIMD2<Float>,
+        sourceTopRight: SIMD2<Float>,
+        sourceBottomLeft: SIMD2<Float>,
+        sourceBottomRight: SIMD2<Float>
+    ) -> (topLeft: SIMD2<Float>, topRight: SIMD2<Float>, bottomLeft: SIMD2<Float>, bottomRight: SIMD2<Float>) {
+        switch item.normalizedRotationQuarterTurns {
+        case 1:
+            return (
+                topLeft: sourceBottomLeft,
+                topRight: sourceTopLeft,
+                bottomLeft: sourceBottomRight,
+                bottomRight: sourceTopRight
+            )
+        case 2:
+            return (
+                topLeft: sourceBottomRight,
+                topRight: sourceBottomLeft,
+                bottomLeft: sourceTopRight,
+                bottomRight: sourceTopLeft
+            )
+        case 3:
+            return (
+                topLeft: sourceTopRight,
+                topRight: sourceBottomRight,
+                bottomLeft: sourceTopLeft,
+                bottomRight: sourceBottomLeft
+            )
+        default:
+            return (
+                topLeft: sourceTopLeft,
+                topRight: sourceTopRight,
+                bottomLeft: sourceBottomLeft,
+                bottomRight: sourceBottomRight
+            )
+        }
     }
 
     private func temporalBlend(for item: CollageItem) -> (hasPrevious: Bool, previousTexture: MTLTexture?, blend: Float) {
@@ -297,14 +343,15 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
 
     private func sourceRect(for item: CollageItem, targetAspect: CGFloat) -> CGRect {
         let base = item.cropRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let sourceTargetAspect = item.sourceAspect(forDisplayAspect: targetAspect)
         let sourceAspect = (base.width * item.pixelSize.width) / max(1, base.height * item.pixelSize.height)
         var width = base.width
         var height = base.height
 
-        if sourceAspect > targetAspect {
-            width = base.height * targetAspect * item.pixelSize.height / max(1, item.pixelSize.width)
+        if sourceAspect > sourceTargetAspect {
+            width = base.height * sourceTargetAspect * item.pixelSize.height / max(1, item.pixelSize.width)
         } else {
-            height = base.width * item.pixelSize.width / max(1, targetAspect * item.pixelSize.height)
+            height = base.width * item.pixelSize.width / max(1, sourceTargetAspect * item.pixelSize.height)
         }
 
         let zoom = max(1, min(6, item.zoom))

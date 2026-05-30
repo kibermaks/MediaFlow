@@ -324,6 +324,18 @@ extension MetalCollageView {
             togglePanForFocusedItem()
             return true
         }
+        if !commandDown, event.keyCode == 33 {
+            rotateFocusedItemLeft()
+            return true
+        }
+        if !commandDown, event.keyCode == 30 {
+            rotateFocusedItemRight()
+            return true
+        }
+        if !commandDown, event.keyCode == 15 {
+            rotateFocusedItemHalfTurn()
+            return true
+        }
         if !commandDown, event.keyCode == 49 {
             let shouldPause = items.contains { $0.isVideoPlaying }
             let visibleIDs = Set(visibleSlots.map { $0.item.id })
@@ -336,7 +348,7 @@ extension MetalCollageView {
                     item.playWhenVisible = item.frozenPlayWhenVisible ?? true
                     item.frozenPlayWhenVisible = nil
                     if item.playWhenVisible && visibleIDs.contains(item.id) {
-                        item.player?.rate = item.speed
+                        resumePlayback(for: item)
                     }
                 }
             }

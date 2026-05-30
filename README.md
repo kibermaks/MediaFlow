@@ -26,7 +26,7 @@ MediaFlow is a Metal-backed macOS app for turning a TV, spare monitor, or unused
   <img src="docs/MediaFlowDemo.gif" width="100%" alt="MediaFlow demo with mixed image and video layouts" />
 </p>
 
-The app is designed for ambient local playback, live walls, and visual comparison across mixed media: a floating Flow Library, drag-and-drop and picker ingest, Photos import, round-robin or random rotation, optional duplicate random slots, video loops, per-item speed controls, A-B segments, crop-as-zone layout, Metal quality diagnostics, frame interpolation, denoise, tone recovery, and saved encrypted playback layouts.
+The app is designed for ambient local playback, live walls, and visual comparison across mixed media: a floating Flow Library, drag-and-drop and picker ingest, Photos import, round-robin or random rotation, optional duplicate random slots, video Loop/Swing modes, per-item rotation, per-item speed controls, A-B segments, crop-as-zone layout, Metal quality diagnostics, frame interpolation, denoise, tone recovery, and saved encrypted playback layouts.
 
 ## Features
 
@@ -39,7 +39,7 @@ The app is designed for ambient local playback, live walls, and visual compariso
 - Edge-to-edge collage layout that recalculates when items are added, removed, rotated, resized, reordered, cropped, or when the window changes size.
 - Full content visible by default. Cropping happens only when explicitly requested.
 - Per-item crop zones, pan, zoom, and layout weights.
-- Video looping, pause/play, mute, volume, speed, timeline scrubbing, and multiple A-B loop segments.
+- Video Loop/Swing playback, pause/play, mute, volume, speed, timeline scrubbing, and multiple A-B loop segments.
 - Global freeze/resume with `Space`, preserving each video's own state.
 - Metal quality modes: Best, Linear, Nearest, Bicubic, and Lanczos 2.
 - Optional frame interpolation for slower-than-1x playback.
@@ -140,11 +140,12 @@ Hotkeys are handled by physical key position, so they keep working under non-Lat
 - Shift-drag an item over another to reorder layout.
 - Mouse wheel over an item zooms it, clamped to 100% minimum.
 - Enable optional hover tools from **View -> Show Hover Item Tools**.
+- Rotate items with **Item -> Rotate Left/Right/180** or `[` / `]` / `R`.
 - Use **Crop** then drag a rectangle, or Option-drag an item directly, to apply a crop aspect to that item.
 
 ## Save And Load
 
-- `.ivplayback` files store local file paths, crop, pan, zoom, layout weights, video speed, volume, mute state, and A-B loops.
+- `.ivplayback` files store local file paths, crop, pan, zoom, rotation, layout weights, video Loop/Swing mode, speed, volume, mute state, and A-B loops.
 - Saved playbacks preserve the Flow Library, maximum visible item count, rotation mode, and duplicate-random-slot preference.
 - Playback files are encrypted, but the app currently uses an embedded key. This prevents plain JSON on disk, not reverse-engineering by someone with the binary.
 - Recent playbacks appear under **File -> Recent Playbacks**.

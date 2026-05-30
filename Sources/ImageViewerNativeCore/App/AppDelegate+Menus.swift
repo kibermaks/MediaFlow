@@ -100,6 +100,14 @@ extension AppDelegate {
         itemMenu.addItem(withTitle: "Zoom Out", action: #selector(MetalCollageView.zoomOutFocusedItem), keyEquivalent: "")
         let panItem = itemMenu.addItem(withTitle: "Toggle Pan", action: #selector(MetalCollageView.togglePanForFocusedItem), keyEquivalent: "p")
         panItem.keyEquivalentModifierMask = []
+        itemMenu.addItem(.separator())
+        let rotateLeft = itemMenu.addItem(withTitle: "Rotate Left", action: #selector(MetalCollageView.rotateFocusedItemLeft), keyEquivalent: "[")
+        rotateLeft.keyEquivalentModifierMask = []
+        let rotateHalfTurn = itemMenu.addItem(withTitle: "Rotate 180", action: #selector(MetalCollageView.rotateFocusedItemHalfTurn), keyEquivalent: "r")
+        rotateHalfTurn.keyEquivalentModifierMask = []
+        let rotateRight = itemMenu.addItem(withTitle: "Rotate Right", action: #selector(MetalCollageView.rotateFocusedItemRight), keyEquivalent: "]")
+        rotateRight.keyEquivalentModifierMask = []
+        itemMenu.addItem(withTitle: "Reset Rotation", action: #selector(MetalCollageView.resetFocusedItemRotation), keyEquivalent: "")
         itemMenuItem.submenu = itemMenu
         main.addItem(itemMenuItem)
 

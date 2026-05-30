@@ -130,6 +130,9 @@ final class OverlayView: NSView {
         if !item.isVideoPlaying {
             labels.append(("Pause", .secondaryLabelColor))
         }
+        if item.playbackMode == .swing {
+            labels.append((item.playbackMode.badgeName, .systemPurple))
+        }
         if solo {
             labels.append(("Solo", .systemTeal))
         }
@@ -280,6 +283,14 @@ final class OverlayView: NSView {
 final class VideoTimelineView: NSView {
     weak var canvas: MetalCollageView?
     weak var item: CollageItem?
+    private enum ABMarkerDragTarget {
+        case loopA(Int)
+        case loopB(Int)
+        case pendingA
+        case pendingB
+    }
+    private var markerDragTarget: ABMarkerDragTarget?
+    private var markerDragPreviewSeconds: Double?
 
     override var isFlipped: Bool { false }
 
@@ -315,6 +326,10 @@ final class VideoTimelineView: NSView {
         let knobX = track.minX + track.width * CGFloat(progress)
         NSColor.white.withAlphaComponent(0.92).setFill()
         NSBezierPath(ovalIn: CGRect(x: knobX - 5, y: track.midY - 5, width: 10, height: 10)).fill()
+
+        if let markerDragPreviewSeconds {
+            drawDragPreview(at: markerDragPreviewSeconds, duration: duration, track: track)
+        }
     }
 
     private func drawLoopLabels(index: Int, startX: CGFloat, endX: CGFloat, track: CGRect) {
@@ -361,12 +376,68 @@ final class VideoTimelineView: NSView {
         ])
     }
 
+    private func drawDragPreview(at seconds: Double, duration: Double, track: CGRect) {
+        let pct = max(0, min(1, seconds / duration))
+        let x = track.minX + track.width * CGFloat(pct)
+
+        NSColor.white.withAlphaComponent(0.82).setStroke()
+        let marker = NSBezierPath()
+        marker.move(to: CGPoint(x: x, y: track.minY - 7))
+        marker.line(to: CGPoint(x: x, y: track.maxY + 11))
+        marker.lineWidth = 1.4
+        marker.stroke()
+
+        let text = formatPreviewTime(seconds)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .bold)
+        let textSize = (text as NSString).size(withAttributes: [.font: font])
+        let bubble = CGRect(
+            x: max(bounds.minX + 4, min(bounds.maxX - textSize.width - 18, x - textSize.width / 2 - 9)),
+            y: bounds.minY + 1,
+            width: textSize.width + 18,
+            height: 15
+        )
+        NSColor.black.withAlphaComponent(0.72).setFill()
+        NSBezierPath(roundedRect: bubble, xRadius: 6, yRadius: 6).fill()
+        FlowLibraryStyle.accent.withAlphaComponent(0.92).setStroke()
+        let border = NSBezierPath(roundedRect: bubble, xRadius: 6, yRadius: 6)
+        border.lineWidth = 0.8
+        border.stroke()
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        text.draw(in: bubble.insetBy(dx: 5, dy: 1.5), withAttributes: [
+            .font: font,
+            .foregroundColor: NSColor.white.withAlphaComponent(0.96),
+            .paragraphStyle: paragraph
+        ])
+    }
+
     override func mouseDown(with event: NSEvent) {
+        guard let item, item.durationSeconds > 0 else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        let duration = item.durationSeconds
+        let track = bounds.insetBy(dx: 8, dy: bounds.height * 0.34)
+        if let target = markerHitTarget(at: point, track: track, duration: duration) {
+            markerDragTarget = target
+            updateMarkerDrag(with: point, track: track, duration: duration)
+            return
+        }
         scrub(with: event)
     }
 
     override func mouseDragged(with event: NSEvent) {
-        scrub(with: event)
+        guard let item, item.durationSeconds > 0 else { return }
+        let point = convert(event.locationInWindow, from: nil)
+        if markerDragTarget != nil {
+            let track = bounds.insetBy(dx: 8, dy: bounds.height * 0.34)
+            updateMarkerDrag(with: point, track: track, duration: item.durationSeconds)
+        } else {
+            scrub(with: event)
+        }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        guard markerDragTarget != nil else { return }
+        commitMarkerDrag()
     }
 
     private func scrub(with event: NSEvent) {
@@ -378,6 +449,112 @@ final class VideoTimelineView: NSView {
         canvas?.resetVideoFrameHistory(for: item)
         item.player?.seek(to: CMTime(seconds: item.durationSeconds * Double(pct), preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
         needsDisplay = true
+    }
+
+    private func markerHitTarget(at point: CGPoint, track: CGRect, duration: Double) -> ABMarkerDragTarget? {
+        guard let item else { return nil }
+        var candidates: [(distance: CGFloat, target: ABMarkerDragTarget)] = []
+        func collect(seconds: Double, target: ABMarkerDragTarget) {
+            let x = track.minX + track.width * CGFloat(max(0, min(1, seconds / duration)))
+            let hitRect = CGRect(
+                x: x - 12,
+                y: track.minY - 8,
+                width: 24,
+                height: bounds.maxY - track.minY + 10
+            )
+            guard hitRect.contains(point) else { return }
+            candidates.append((abs(point.x - x), target))
+        }
+
+        for (index, loop) in item.abLoops.enumerated() {
+            collect(seconds: loop.a, target: .loopA(index))
+            collect(seconds: loop.b, target: .loopB(index))
+        }
+        if let pendingA = item.pendingA {
+            collect(seconds: pendingA, target: .pendingA)
+        }
+        if let pendingB = item.pendingB {
+            collect(seconds: pendingB, target: .pendingB)
+        }
+        return candidates.min { lhs, rhs in lhs.distance < rhs.distance }?.target
+    }
+
+    private func updateMarkerDrag(with point: CGPoint, track: CGRect, duration: Double) {
+        let pct = max(0, min(1, (point.x - track.minX) / max(1, track.width)))
+        let requestedSeconds = duration * Double(pct)
+        guard let previewSeconds = applyMarkerDrag(seconds: requestedSeconds, duration: duration) else { return }
+        markerDragPreviewSeconds = previewSeconds
+        previewVideo(at: previewSeconds)
+        needsDisplay = true
+    }
+
+    @discardableResult
+    private func applyMarkerDrag(seconds requestedSeconds: Double, duration: Double) -> Double? {
+        guard let item, let markerDragTarget else { return nil }
+        let minimumGap = 0.05
+        let clampedSeconds = max(0, min(duration, requestedSeconds))
+
+        switch markerDragTarget {
+        case .loopA(let index):
+            guard item.abLoops.indices.contains(index) else { return nil }
+            var loop = item.abLoops[index]
+            loop.a = max(0, min(clampedSeconds, loop.b - minimumGap))
+            item.abLoops[index] = loop
+            return loop.a
+        case .loopB(let index):
+            guard item.abLoops.indices.contains(index) else { return nil }
+            var loop = item.abLoops[index]
+            loop.b = min(duration, max(clampedSeconds, loop.a + minimumGap))
+            item.abLoops[index] = loop
+            return loop.b
+        case .pendingA:
+            item.pendingA = clampedSeconds
+            return clampedSeconds
+        case .pendingB:
+            item.pendingB = clampedSeconds
+            return clampedSeconds
+        }
+    }
+
+    private func previewVideo(at seconds: Double) {
+        guard let item else { return }
+        canvas?.suspendABLoop(for: item, seconds: 30)
+        canvas?.resetVideoFrameHistory(for: item)
+        item.player?.seek(to: CMTime(seconds: seconds, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero)
+    }
+
+    private func commitMarkerDrag() {
+        guard let item, let markerDragTarget else {
+            clearMarkerDrag()
+            return
+        }
+        switch markerDragTarget {
+        case .loopA, .loopB:
+            item.abLoops.sort { $0.a < $1.a }
+            if !item.abLoops.isEmpty {
+                ABHistoryStore.save(loops: item.abLoops, for: item)
+                item.hasSavedABHistory = true
+            }
+        case .pendingA, .pendingB:
+            canvas?.activatePendingLoopIfReady(for: item)
+        }
+        clearMarkerDrag()
+        canvas?.timelineView.needsDisplay = true
+        canvas?.overlay.needsDisplay = true
+        canvas?.tickVideoUI()
+    }
+
+    private func clearMarkerDrag() {
+        markerDragTarget = nil
+        markerDragPreviewSeconds = nil
+        needsDisplay = true
+    }
+
+    private func formatPreviewTime(_ seconds: Double) -> String {
+        guard seconds.isFinite, seconds > 0 else { return "0:00.0" }
+        let tenths = Int((seconds * 10).rounded())
+        let totalSeconds = tenths / 10
+        return String(format: "%d:%02d.%d", totalSeconds / 60, totalSeconds % 60, tenths % 10)
     }
 }
 

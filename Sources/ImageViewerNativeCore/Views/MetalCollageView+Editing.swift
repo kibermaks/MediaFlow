@@ -116,6 +116,54 @@ extension MetalCollageView {
         overlay.needsDisplay = true
     }
 
+    @objc func rotateHoveredItemLeft() {
+        guard let hoverItem else { return }
+        rotate(item: hoverItem, deltaQuarterTurns: -1)
+    }
+
+    @objc func rotateHoveredItemRight() {
+        guard let hoverItem else { return }
+        rotate(item: hoverItem, deltaQuarterTurns: 1)
+    }
+
+    @objc func rotateHoveredItemHalfTurn() {
+        guard let hoverItem else { return }
+        rotate(item: hoverItem, deltaQuarterTurns: 2)
+    }
+
+    @objc func rotateFocusedItemLeft() {
+        guard let item = keyboardTargetItem() else { return }
+        rotate(item: item, deltaQuarterTurns: -1)
+    }
+
+    @objc func rotateFocusedItemRight() {
+        guard let item = keyboardTargetItem() else { return }
+        rotate(item: item, deltaQuarterTurns: 1)
+    }
+
+    @objc func rotateFocusedItemHalfTurn() {
+        guard let item = keyboardTargetItem() else { return }
+        rotate(item: item, deltaQuarterTurns: 2)
+    }
+
+    @objc func resetFocusedItemRotation() {
+        guard let item = keyboardTargetItem() else { return }
+        setRotation(for: item, quarterTurns: 0)
+    }
+
+    func rotate(item: CollageItem, deltaQuarterTurns: Int) {
+        setRotation(for: item, quarterTurns: item.rotationQuarterTurns + deltaQuarterTurns)
+    }
+
+    func setRotation(for item: CollageItem, quarterTurns: Int) {
+        let normalized = CollageItem.normalizedRotationQuarterTurns(quarterTurns)
+        guard item.rotationQuarterTurns != normalized else { return }
+        item.rotationQuarterTurns = normalized
+        selectOnly(item)
+        relayout()
+        postFlowLibraryChanged()
+    }
+
     func setZoom(for item: CollageItem, zoom requestedZoom: CGFloat, anchor: CGPoint? = nil) {
         let oldZoom = item.zoom
         let targetRect = drawRect(for: item)
@@ -123,19 +171,26 @@ extension MetalCollageView {
         let localX = max(0, min(1, (anchorPoint.x - targetRect.minX) / max(1, targetRect.width)))
         let localY = max(0, min(1, (anchorPoint.y - targetRect.minY) / max(1, targetRect.height)))
         let before = normalizedSourceRect(for: item, targetAspect: targetRect.width / max(1, targetRect.height))
-        let anchorSourceX = before.minX + localX * before.width
-        let anchorSourceY = before.minY + (1 - localY) * before.height
+        let displayAnchor = CGPoint(x: localX, y: 1 - localY)
+        let sourceAnchor = item.sourcePoint(fromDisplayNormalizedPoint: displayAnchor)
+        let anchorSourceX = before.minX + sourceAnchor.x * before.width
+        let anchorSourceY = before.minY + sourceAnchor.y * before.height
 
         if requestedZoom < 1, item.zoom <= 1.001, item.cropRect != nil {
-            expandCrop(for: item, factor: min(1.4, 1 / max(0.3, requestedZoom)), anchorSource: CGPoint(x: anchorSourceX, y: anchorSourceY), local: CGPoint(x: localX, y: localY))
+            expandCrop(
+                for: item,
+                factor: min(1.4, 1 / max(0.3, requestedZoom)),
+                anchorSource: CGPoint(x: anchorSourceX, y: anchorSourceY),
+                sourceAnchor: sourceAnchor
+            )
             return
         }
 
         item.zoom = max(1, min(6, requestedZoom))
         let after = normalizedSourceRect(for: item, targetAspect: targetRect.width / max(1, targetRect.height), zoom: item.zoom, pan: .zero)
         let base = item.cropRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
-        let desiredCenterX = anchorSourceX - (localX - 0.5) * after.width
-        let desiredCenterY = anchorSourceY + (localY - 0.5) * after.height
+        let desiredCenterX = anchorSourceX - (sourceAnchor.x - 0.5) * after.width
+        let desiredCenterY = anchorSourceY - (sourceAnchor.y - 0.5) * after.height
         let maxOffsetX = max(0, (base.width - after.width) / 2)
         let maxOffsetY = max(0, (base.height - after.height) / 2)
 
@@ -169,14 +224,15 @@ extension MetalCollageView {
 
     func normalizedSourceRect(for item: CollageItem, targetAspect: CGFloat, zoom: CGFloat? = nil, pan: CGPoint? = nil) -> CGRect {
         let base = item.cropRect ?? CGRect(x: 0, y: 0, width: 1, height: 1)
+        let sourceTargetAspect = item.sourceAspect(forDisplayAspect: targetAspect)
         let sourceAspect = (base.width * item.pixelSize.width) / max(1, base.height * item.pixelSize.height)
         var width = base.width
         var height = base.height
 
-        if sourceAspect > targetAspect {
-            width = base.height * targetAspect * item.pixelSize.height / max(1, item.pixelSize.width)
+        if sourceAspect > sourceTargetAspect {
+            width = base.height * sourceTargetAspect * item.pixelSize.height / max(1, item.pixelSize.width)
         } else {
-            height = base.width * item.pixelSize.width / max(1, targetAspect * item.pixelSize.height)
+            height = base.width * item.pixelSize.width / max(1, sourceTargetAspect * item.pixelSize.height)
         }
 
         let z = max(1, min(6, zoom ?? item.zoom))
@@ -192,12 +248,12 @@ extension MetalCollageView {
         return CGRect(x: centerX - width / 2, y: centerY - height / 2, width: width, height: height)
     }
 
-    func expandCrop(for item: CollageItem, factor: CGFloat, anchorSource: CGPoint, local: CGPoint) {
+    func expandCrop(for item: CollageItem, factor: CGFloat, anchorSource: CGPoint, sourceAnchor: CGPoint) {
         guard let crop = item.cropRect else { return }
         let width = min(1, crop.width * factor)
         let height = min(1, crop.height * factor)
-        var x = anchorSource.x - local.x * width
-        var y = anchorSource.y - (1 - local.y) * height
+        var x = anchorSource.x - sourceAnchor.x * width
+        var y = anchorSource.y - sourceAnchor.y * height
         x = max(0, min(1 - width, x))
         y = max(0, min(1 - height, y))
         if width >= 0.995, height >= 0.995 {
@@ -218,12 +274,12 @@ extension MetalCollageView {
         let u1 = (rect.maxX - content.minX) / max(1, content.width)
         let v0 = (content.maxY - rect.maxY) / max(1, content.height)
         let v1 = (content.maxY - rect.minY) / max(1, content.height)
-        item.cropRect = CGRect(
+        item.cropRect = item.sourceRect(fromDisplayNormalizedRect: CGRect(
             x: max(0, min(1, u0)),
             y: max(0, min(1, v0)),
             width: max(0.01, min(1, u1) - max(0, u0)),
             height: max(0.01, min(1, v1) - max(0, v0))
-        )
+        ))
         item.zoom = 1
         item.pan = .zero
         selectOnly(item)

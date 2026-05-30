@@ -17,6 +17,12 @@ enum AppMetadata {
     static let name = "MediaFlow"
     static let supportDirectoryName = "MediaFlow"
     static let tagline = "Fullscreen live media walls for local photos and videos"
+    static let playbackFileExtension = "ivplayback"
+    static let playbackContentTypeIdentifier = "com.kibermaks.mediaflow.playback"
+    static let playbackContentType = UTType(exportedAs: playbackContentTypeIdentifier, conformingTo: .data)
+    static var playbackPanelContentType: UTType {
+        UTType(filenameExtension: playbackFileExtension) ?? playbackContentType
+    }
     static let authorName = "kibermaks"
     static let repositoryOwner = "kibermaks"
     static let repositoryName = "MediaFlow"
@@ -30,6 +36,29 @@ enum AppMetadata {
 enum MediaKind {
     case image
     case video
+}
+
+enum VideoPlaybackMode: Int, Codable, CaseIterable {
+    case loop
+    case swing
+
+    var displayName: String {
+        switch self {
+        case .loop:
+            return "Loop"
+        case .swing:
+            return "Swing"
+        }
+    }
+
+    var badgeName: String {
+        switch self {
+        case .loop:
+            return "Loop"
+        case .swing:
+            return "Swing"
+        }
+    }
 }
 
 enum MediaDynamicRange: Int {
