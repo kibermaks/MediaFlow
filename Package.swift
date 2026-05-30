@@ -7,12 +7,22 @@ let package = Package(
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "ImageViewerNative", targets: ["ImageViewerNative"])
+        .executable(name: "ImageViewerNative", targets: ["ImageViewerNative"]),
+        .library(name: "ImageViewerNativeCore", targets: ["ImageViewerNativeCore"])
     ],
     targets: [
+        .target(
+            name: "ImageViewerNativeCore",
+            path: "Sources/ImageViewerNativeCore"
+        ),
         .executableTarget(
             name: "ImageViewerNative",
+            dependencies: ["ImageViewerNativeCore"],
             path: "Sources/ImageViewerNative"
+        ),
+        .testTarget(
+            name: "ImageViewerNativeCoreTests",
+            dependencies: ["ImageViewerNativeCore"]
         )
     ]
 )
