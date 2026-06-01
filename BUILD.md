@@ -63,6 +63,17 @@ For public release metadata that hides local build/worktree details in-app:
 PUBLIC_RELEASE=true MARKETING_VERSION="$RELEASE_VERSION" ./scripts/build-native-app.sh
 ```
 
+For public releases, reuse the same Developer ID identity and notary profile used by SessionFlow. The keychain profile name is intentionally still `SessionFlow`:
+
+```sh
+SIGN_IDENTITY="Developer ID Application: MaksymTW Grigorash (RGFAX8X946)" \
+PUBLIC_RELEASE=true \
+MARKETING_VERSION="$RELEASE_VERSION" \
+./scripts/build-native-app.sh
+
+./scripts/notarize.sh "MediaFlow.app" SessionFlow
+```
+
 ## Run
 
 Open the generated app:
@@ -105,6 +116,14 @@ To sign the DMG container with Developer ID, pass the same signing identity:
 SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/create-dmg.sh
 ```
 
+For the current release setup:
+
+```sh
+SIGN_IDENTITY="Developer ID Application: MaksymTW Grigorash (RGFAX8X946)" ./scripts/create-dmg.sh
+./scripts/notarize.sh "dmg_output/MediaFlow-$RELEASE_VERSION.dmg" SessionFlow
+./scripts/verify-dmg.sh "dmg_output/MediaFlow-$RELEASE_VERSION.dmg"
+```
+
 ## Self-Updates
 
 The app menu exposes **Check for Updates...**. It checks:
@@ -138,6 +157,7 @@ SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/create-dm
 ```
 
 The keychain profile can be any stored `notarytool` profile for the same Apple Developer team.
+This repo currently reuses the stored `SessionFlow` notary profile and `Developer ID Application: MaksymTW Grigorash (RGFAX8X946)` signing identity.
 
 ## Verification
 
