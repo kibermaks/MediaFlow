@@ -105,22 +105,27 @@ extension MetalCollageView {
         return selectedVideoItem()
     }
 
-    func seekVideo(_ item: CollageItem, delta: Double) {
+    func seekVideo(_ item: CollageItem, delta: Double, preservePlayback: Bool = true) {
         guard item.durationSeconds > 0 else { return }
         suspendABLoop(for: item, seconds: 5)
         let target = max(0, min(item.durationSeconds, item.currentTimeSeconds + delta))
         let player = item.player
         let wasPlaying = item.isVideoPlaying
         let rate = item.playbackRate
+        if wasPlaying && !preservePlayback {
+            item.playWhenVisible = false
+            player?.pause()
+        }
         resetVideoFrameHistory(for: item)
         player?.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak player] _ in
-            guard wasPlaying else { return }
+            guard wasPlaying && preservePlayback else { return }
             player?.rate = rate
         }
-        if wasPlaying {
+        if wasPlaying && preservePlayback {
             resumePlayback(for: item)
         }
         selectOnly(item)
+        tickVideoUI()
     }
 
     func resetVideoFrameHistory(for item: CollageItem) {

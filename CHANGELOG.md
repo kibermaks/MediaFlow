@@ -2,6 +2,13 @@
 
 All notable MediaFlow changes are tracked here. Keep the newest release first and attach the matching DMG to the GitHub Release for self-updates.
 
+## [0.6] - 2026-06-01
+
+### Changed
+- Left and right arrow video seeking now supports modifier steps: Option steps one frame, Shift nudges one second, and Command jumps one minute.
+- Enlarge and Reduce now support modifier steps: Option for fine sizing, Shift for smaller adjustments, and Command for coarse sizing.
+- The Enlarge menu shortcut now displays as `+` instead of the physical `=` key.
+
 ## [0.5] - 2026-05-30
 
 ### Added

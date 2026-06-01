@@ -91,7 +91,7 @@ extension AppDelegate {
 
         let itemMenuItem = NSMenuItem()
         let itemMenu = NSMenu(title: "Item")
-        let enlargeItem = itemMenu.addItem(withTitle: "Enlarge", action: #selector(MetalCollageView.enlargeFocusedItem), keyEquivalent: "=")
+        let enlargeItem = itemMenu.addItem(withTitle: "Enlarge", action: #selector(MetalCollageView.enlargeFocusedItem), keyEquivalent: "+")
         enlargeItem.keyEquivalentModifierMask = []
         let reduceItem = itemMenu.addItem(withTitle: "Reduce", action: #selector(MetalCollageView.reduceFocusedItem), keyEquivalent: "-")
         reduceItem.keyEquivalentModifierMask = []

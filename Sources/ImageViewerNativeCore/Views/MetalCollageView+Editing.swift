@@ -72,13 +72,35 @@ extension MetalCollageView {
     }
 
     @objc func enlargeFocusedItem() {
+        enlargeFocusedItemByFactor(1.16)
+    }
+
+    func enlargeFocusedItemByFactor(_ factor: CGFloat) {
         guard let item = keyboardTargetItem() else { return }
-        resize(item: item, factor: 1.16)
+        resize(item: item, factor: factor)
     }
 
     @objc func reduceFocusedItem() {
+        reduceFocusedItemByFactor(1.16)
+    }
+
+    func reduceFocusedItemByFactor(_ factor: CGFloat) {
         guard let item = keyboardTargetItem() else { return }
-        resize(item: item, factor: 1 / 1.16)
+        resize(item: item, factor: 1 / factor)
+    }
+
+    func resizeStepFactor(for event: NSEvent) -> CGFloat {
+        let flags = event.modifierFlags
+        if flags.contains(.option) {
+            return 1.03
+        }
+        if flags.contains(.shift) {
+            return 1.08
+        }
+        if flags.contains(.command) {
+            return 1.35
+        }
+        return 1.16
     }
 
     @objc func zoomInFocusedItem() {

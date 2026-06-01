@@ -279,39 +279,52 @@ extension MetalCollageView {
             cycleMetalQualityMode()
             return true
         }
-        if !commandDown, let video = keyboardVideoTarget() {
+        if let video = keyboardVideoTarget() {
             switch event.keyCode {
             case 123:
-                seekVideo(video, delta: event.isARepeat ? -30 : -10)
+                seekVideo(
+                    video,
+                    delta: -horizontalVideoSeekStep(for: video, event: event),
+                    preservePlayback: !event.modifierFlags.contains(.option)
+                )
                 return true
             case 124:
-                seekVideo(video, delta: event.isARepeat ? 30 : 10)
+                seekVideo(
+                    video,
+                    delta: horizontalVideoSeekStep(for: video, event: event),
+                    preservePlayback: !event.modifierFlags.contains(.option)
+                )
                 return true
             case 125:
+                guard !commandDown else { break }
                 adjustVideoSpeed(video, delta: event.isARepeat ? -0.15 : -0.05)
                 return true
             case 126:
+                guard !commandDown else { break }
                 adjustVideoSpeed(video, delta: event.isARepeat ? 0.15 : 0.05)
                 return true
             case 18, 83:
+                guard !commandDown else { break }
                 setA(for: video)
                 return true
             case 19, 84:
+                guard !commandDown else { break }
                 setB(for: video)
                 return true
             case 29, 82:
+                guard !commandDown else { break }
                 clearAB(for: video)
                 return true
             default:
                 break
             }
         }
-        if !commandDown, event.keyCode == 24 || event.keyCode == 69 {
-            enlargeFocusedItem()
+        if event.keyCode == 24 || event.keyCode == 69 {
+            enlargeFocusedItemByFactor(resizeStepFactor(for: event))
             return true
         }
-        if !commandDown, event.keyCode == 27 || event.keyCode == 78 {
-            reduceFocusedItem()
+        if event.keyCode == 27 || event.keyCode == 78 {
+            reduceFocusedItemByFactor(resizeStepFactor(for: event))
             return true
         }
         if !commandDown, event.keyCode == 6 {
@@ -356,6 +369,28 @@ extension MetalCollageView {
             return true
         }
         return false
+    }
+
+    func horizontalVideoSeekStep(for item: CollageItem, event: NSEvent) -> Double {
+        let flags = event.modifierFlags
+        if flags.contains(.option) {
+            return videoFrameStepDuration(for: item)
+        }
+        if flags.contains(.shift) {
+            return 1
+        }
+        if flags.contains(.command) {
+            return 60
+        }
+        return event.isARepeat ? 30 : 10
+    }
+
+    func videoFrameStepDuration(for item: CollageItem) -> Double {
+        let duration = item.videoNominalFrameDuration
+        guard duration.isFinite, duration > 0 else {
+            return 1.0 / 30.0
+        }
+        return max(1.0 / 240.0, min(0.5, duration))
     }
 
     func restoreWindowIfExpanded() -> Bool {
