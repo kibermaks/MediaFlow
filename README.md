@@ -31,6 +31,7 @@ The app is designed for ambient local playback, live walls, and visual compariso
 ## Features
 
 - Native AppKit + Metal rendering for photos and videos on a fullscreen TV, spare screen, live media wall, or comparison layout.
+- Color-aware mixed photo/video rendering, including Display P3 stills, SDR video, and HDR/EDR-capable media on one canvas.
 - Floating **Flow Library** for keeping a larger media pool available without forcing every item onto the visible wall.
 - Drag-and-drop ingest, **File -> Add Files...**, **File -> Add From Photos...**, and Finder **Open With** registration for images and videos.
 - Configurable maximum visible items so the screen stays readable even when the library is much larger.
@@ -42,8 +43,7 @@ The app is designed for ambient local playback, live walls, and visual compariso
 - Video loop playback, pause/play, mute, volume, speed, timeline scrubbing, and multiple A-B loop segments.
 - Global freeze/resume with `Space`, preserving each video's own state.
 - Metal quality modes: Best, Linear, Nearest, Bicubic, and Lanczos 2.
-- Optional frame interpolation for slower-than-1x playback.
-- Optional Natural Denoise + Detail, Tone Recovery, Magic Rescue, and split compare.
+- Per-file **Quality Controls** with a master file-enhancements switch, Color Output diagnostics, frame interpolation, Natural Denoise, Auto Tone, Magic Rescue, brightness, and split compare.
 - Encrypted `.ivplayback` save/load with recent playbacks and a manual last-closed-session restore.
 - App menu dialogs for **About MediaFlow**, **What's New**, and **Check for Updates**.
 - Generated production `.app` and DMG installer scripts.
@@ -105,6 +105,17 @@ While the GitHub repository is private, update checks need a `MEDIAFLOW_GITHUB_T
 5. Click an item to select it.
 6. Use menus and hotkeys for layout, crop, playback, and quality controls.
 7. Save reusable layouts with **File -> Save Playback...**.
+
+## Quality And Color
+
+- MediaFlow keeps mixed photo/video collages color-aware instead of forcing every file through the same assumptions. SDR collages use a stable Display P3 canvas, while HDR/EDR-capable media can use an extended linear Display P3 path.
+- Display P3 photos can sit beside ordinary SDR videos without the video changing the photo's color output.
+- HDR-aware still-image loading supports gain-map/adaptive HDR material and tone-maps it against the current display headroom where available.
+- **Quality Controls** are saved per file by file hash, so one problematic photo or video can have its own processing settings without changing the rest of the wall.
+- **File Enhancements** is the per-file master bypass for quality processing. Turning it off leaves the file on the raw rendering path while preserving its saved settings.
+- **Color Output** is a diagnostic per-file selector for checking Auto, sRGB, P3, linear sRGB, linear P3, and raw decoded output paths.
+- **Brightness** follows **Auto Tone**. If Auto Tone is off, Brightness is disabled and does not affect rendering.
+- `scripts/inspect-media-file.swift` prints ImageIO, Core Image, and AVFoundation metadata for a photo or video when a file still looks wrong.
 
 ## Flow Library And Rotation
 
