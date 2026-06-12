@@ -102,15 +102,20 @@ final class FlowSegmentedControl: NSControl {
         didSet { needsDisplay = true }
     }
 
+    override var isEnabled: Bool {
+        didSet { needsDisplay = true }
+    }
+
     override var intrinsicContentSize: NSSize {
         NSSize(width: 300, height: 30)
     }
 
     override func draw(_ dirtyRect: NSRect) {
+        let alpha: CGFloat = isEnabled ? 1 : 0.42
         let rect = bounds.insetBy(dx: 0.5, dy: 0.5)
-        FlowLibraryStyle.controlFill.setFill()
+        FlowLibraryStyle.controlFill.withAlphaComponent(0.82 * alpha).setFill()
         NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7).fill()
-        FlowLibraryStyle.controlStroke.setStroke()
+        FlowLibraryStyle.controlStroke.withAlphaComponent(alpha).setStroke()
         let border = NSBezierPath(roundedRect: rect, xRadius: 7, yRadius: 7)
         border.lineWidth = 1
         border.stroke()
@@ -120,11 +125,11 @@ final class FlowSegmentedControl: NSControl {
         for index in segments.indices {
             let segmentRect = CGRect(x: rect.minX + CGFloat(index) * segmentWidth, y: rect.minY, width: segmentWidth, height: rect.height)
             if index == selectedIndex {
-                NSColor.white.withAlphaComponent(0.16).setFill()
+                NSColor.white.withAlphaComponent(0.16 * alpha).setFill()
                 NSBezierPath(roundedRect: segmentRect.insetBy(dx: 3, dy: 3), xRadius: 6, yRadius: 6).fill()
             }
             if index > 0 {
-                NSColor.white.withAlphaComponent(0.08).setStroke()
+                NSColor.white.withAlphaComponent(0.08 * alpha).setStroke()
                 let divider = NSBezierPath()
                 divider.move(to: CGPoint(x: segmentRect.minX, y: rect.minY + 6))
                 divider.line(to: CGPoint(x: segmentRect.minX, y: rect.maxY - 6))
@@ -135,7 +140,7 @@ final class FlowSegmentedControl: NSControl {
             paragraph.alignment = .center
             segments[index].draw(in: segmentRect.insetBy(dx: 3, dy: 7), withAttributes: [
                 .font: NSFont.systemFont(ofSize: 12, weight: index == selectedIndex ? .semibold : .medium),
-                .foregroundColor: index == selectedIndex ? FlowLibraryStyle.primaryText : FlowLibraryStyle.secondaryText,
+                .foregroundColor: (index == selectedIndex ? FlowLibraryStyle.primaryText : FlowLibraryStyle.secondaryText).withAlphaComponent(alpha),
                 .paragraphStyle: paragraph
             ])
         }

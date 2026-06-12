@@ -279,7 +279,7 @@ extension MetalCollageView {
 
     @objc func clearAllFromPanel() {
         resetSceneForNewPlayback()
-        syncLayerEDRMetadata()
+        syncDisplayColorState()
         relayout()
         tickVideoUI()
         postFlowLibraryChanged()

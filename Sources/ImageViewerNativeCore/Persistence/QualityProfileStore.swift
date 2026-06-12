@@ -20,6 +20,8 @@ struct SavedQualityLibrary: Codable {
 struct SavedQualityProfile: Codable {
     var fileName: String
     var updatedAt: Date
+    var qualityProcessingEnabled: Bool?
+    var colorOutputModeRaw: Int?
     var qualityModeRaw: Int
     var frameInterpolationEnabled: Bool
     var naturalDenoiseEnabled: Bool
@@ -42,6 +44,8 @@ enum QualityProfileStore {
 
     static func applyProfile(for item: CollageItem) -> Bool {
         guard let hash = item.fileHash, let profile = readLibrary().entries[hash] else { return false }
+        item.qualityProcessingEnabled = profile.qualityProcessingEnabled ?? true
+        item.colorOutputModeRaw = ColorOutputMode(rawValue: profile.colorOutputModeRaw ?? ColorOutputMode.auto.rawValue)?.rawValue ?? ColorOutputMode.auto.rawValue
         item.qualityModeRaw = profile.qualityModeRaw
         item.frameInterpolationEnabled = profile.frameInterpolationEnabled
         item.naturalDenoiseEnabled = profile.naturalDenoiseEnabled
@@ -60,6 +64,8 @@ enum QualityProfileStore {
         library.entries[hash] = SavedQualityProfile(
             fileName: item.name,
             updatedAt: Date(),
+            qualityProcessingEnabled: item.qualityProcessingEnabled,
+            colorOutputModeRaw: item.colorOutputModeRaw,
             qualityModeRaw: item.qualityModeRaw,
             frameInterpolationEnabled: item.frameInterpolationEnabled,
             naturalDenoiseEnabled: item.naturalDenoiseEnabled,

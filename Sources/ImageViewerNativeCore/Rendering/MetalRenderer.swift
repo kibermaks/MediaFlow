@@ -16,14 +16,6 @@ import UniformTypeIdentifiers
 final class MetalRenderer: NSObject, MTKViewDelegate {
     weak var canvas: MetalCollageView?
     var qualityMode: MetalQualityMode = .best
-    var frameInterpolationEnabled = FrameInterpolationStore.enabled
-    var naturalDenoiseEnabled = NaturalDenoiseStore.enabled
-    var naturalDenoiseStrength = NaturalDenoiseStore.strength
-    var toneRecoveryEnabled = ToneRecoveryStore.enabled
-    var toneRecoveryStrength = ToneRecoveryStore.strength
-    var brightnessBoost = BrightnessBoostStore.strength
-    var magicRescueEnabled = MagicRescueStore.enabled
-    var magicRescueStrength = MagicRescueStore.strength
     var splitCompareEnabled = SplitCompareStore.enabled
     var splitCompareReversed = SplitCompareStore.reversed
     private let device: MTLDevice
@@ -221,17 +213,18 @@ final class MetalRenderer: NSObject, MTKViewDelegate {
             height: max(1, texRect.height * item.pixelSize.height)
         )
         let isMinifying = sourcePixels.width > outputPixels.width * 1.05 || sourcePixels.height > outputPixels.height * 1.05
-        let temporal = temporalBlend(for: item)
+        let qualityProcessingEnabled = item.qualityProcessingEnabled
+        let temporal = qualityProcessingEnabled ? temporalBlend(for: item) : (hasPrevious: false, previousTexture: nil, blend: Float(1))
         var uniforms = MetalFragmentUniforms(
-            samplingMode: mode.shaderSamplingMode(isMinifying: isMinifying),
+            samplingMode: qualityProcessingEnabled ? mode.shaderSamplingMode(isMinifying: isMinifying) : 0,
             hasPreviousTexture: temporal.hasPrevious ? 1 : 0,
             splitCompare: splitCompareEnabled ? (splitCompareReversed ? 2 : 1) : 0,
             viewportWidth: Float(max(1, drawableSize.width)),
             temporalBlend: temporal.blend,
-            denoiseStrength: item.naturalDenoiseEnabled ? item.naturalDenoiseStrength : 0,
-            toneStrength: item.toneRecoveryEnabled ? item.toneRecoveryStrength : 0,
-            magicStrength: item.magicRescueEnabled ? item.magicRescueStrength : 0,
-            brightnessBoost: item.brightnessBoost,
+            denoiseStrength: qualityProcessingEnabled && item.naturalDenoiseEnabled ? item.naturalDenoiseStrength : 0,
+            toneStrength: qualityProcessingEnabled && item.toneRecoveryEnabled ? item.toneRecoveryStrength : 0,
+            magicStrength: qualityProcessingEnabled && item.magicRescueEnabled ? item.magicRescueStrength : 0,
+            brightnessBoost: qualityProcessingEnabled && item.toneRecoveryEnabled ? item.brightnessBoost : 0,
             temporalGuard: item.dynamicRange.usesEDR ? 1 : 0
         )
 

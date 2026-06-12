@@ -21,7 +21,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, @unchecked Sendable {
     var qualityPanel: NSPanel?
     var qualityPanelTargetLabel: NSTextField?
     var qualityPanelDefaultsButton: FlowSwitchControl?
+    var qualityPanelColorModeControl: FlowSegmentedControl?
     var qualityPanelModeControl: FlowSegmentedControl?
+    var qualityPanelProcessingButton: FlowSwitchControl?
     var qualityPanelFrameInterpolationButton: FlowSwitchControl?
     var qualityPanelDenoiseButton: FlowSwitchControl?
     var qualityPanelDenoiseSlider: FlowSliderControl?

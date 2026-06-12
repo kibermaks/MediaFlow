@@ -1,6 +1,7 @@
 import AppKit
 @preconcurrency import AVFoundation
 import CoreImage
+import CoreImage.CIFilterBuiltins
 import CoreVideo
 import ImageIO
 import Metal
@@ -64,9 +65,22 @@ extension MetalCollageView {
 
     func prepareLoadedItem(_ item: CollageItem, restoreABHistory: Bool) {
         ensureFileHash(for: item)
-        _ = QualityProfileStore.applyProfile(for: item)
+        let appliedProfile = QualityProfileStore.applyProfile(for: item)
+        if appliedProfile {
+            applyLoadedColorOutputProfile(to: item)
+        }
         if restoreABHistory {
             _ = restoreSavedABHistory(for: item, seekToFirst: false, refreshUI: false)
+        }
+    }
+
+    func applyLoadedColorOutputProfile(to item: CollageItem) {
+        let canvasColorMode = canvasColorMode(adding: item.dynamicRange)
+        switch item.kind {
+        case .image:
+            reloadImageTexture(for: item, canvasColorMode: canvasColorMode)
+        case .video:
+            refreshVideoOutput(for: item, canvasColorMode: canvasColorMode)
         }
     }
 
@@ -84,39 +98,17 @@ extension MetalCollageView {
     }
 
     func loadImage(url: URL) -> CollageItem? {
-        let source = CGImageSourceCreateWithURL(url as CFURL, nil)
-        if let ciImage = hdrAwareCIImage(contentsOf: url) {
-            let extent = ciImage.extent.integral
-            if extent.width > 0, extent.height > 0, extent.width.isFinite, extent.height.isFinite {
-                let width = max(1, Int(ceil(extent.width)))
-                let height = max(1, Int(ceil(extent.height)))
-                let descriptor = MTLTextureDescriptor.texture2DDescriptor(
-                    pixelFormat: .rgba16Float,
-                    width: width,
-                    height: height,
-                    mipmapped: true
-                )
-                descriptor.usage = [.shaderRead, .shaderWrite]
-                descriptor.storageMode = .private
-                if let texture = device?.makeTexture(descriptor: descriptor) {
-                    let normalized = ciImage.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
-                    // Keep EXIF orientation, then write rows in the top-left texture space used by the renderer.
-                    let metalOriented = normalized.transformed(by: CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(height)))
-                    imageContext.render(
-                        metalOriented,
-                        to: texture,
-                        commandBuffer: nil,
-                        bounds: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)),
-                        colorSpace: mediaWorkingColorSpace
-                    )
-                    generateMipmaps(for: texture)
-                    let item = CollageItem(url: url, kind: .image, pixelSize: CGSize(width: width, height: height), texture: texture)
-                    item.dynamicRange = imageDynamicRange(source: source, ciImage: ciImage)
-                    return item
-                }
-            }
+        let colorOutputModeRaw = ColorOutputStore.modeRaw
+        if let rendered = renderImageTexture(url: url, colorOutputModeRaw: colorOutputModeRaw, canvasColorMode: nil) {
+            let item = CollageItem(url: url, kind: .image, pixelSize: rendered.pixelSize, texture: rendered.texture)
+            item.dynamicRange = rendered.dynamicRange
+            item.colorOutputModeRaw = colorOutputModeRaw
+            item.renderedColorOutputModeRaw = colorOutputModeRaw
+            item.renderedCanvasColorModeRaw = rendered.canvasColorMode.rawValue
+            return item
         }
 
+        let source = CGImageSourceCreateWithURL(url as CFURL, nil)
         guard let image = NSImage(contentsOf: url),
               let cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return nil }
         do {
@@ -127,11 +119,146 @@ extension MetalCollageView {
             ])
             let item = CollageItem(url: url, kind: .image, pixelSize: CGSize(width: cgImage.width, height: cgImage.height), texture: texture)
             item.dynamicRange = imageDynamicRange(source: source, ciImage: nil)
+            item.renderedColorOutputModeRaw = colorOutputModeRaw
+            item.renderedCanvasColorModeRaw = CanvasColorMode.displayP3.rawValue
             return item
         } catch {
             NSLog("Image texture failed for \(url.path): \(error)")
             return nil
         }
+    }
+
+    func reloadImageTexture(for item: CollageItem) {
+        reloadImageTexture(for: item, canvasColorMode: currentCanvasColorMode())
+    }
+
+    func reloadImageTexture(for item: CollageItem, canvasColorMode: CanvasColorMode) {
+        guard item.kind == .image,
+              let rendered = renderImageTexture(
+                url: item.url,
+                colorOutputModeRaw: item.colorOutputModeRaw,
+                canvasColorMode: canvasColorMode
+              ) else { return }
+        item.texture = rendered.texture
+        item.dynamicRange = rendered.dynamicRange
+        item.renderedColorOutputModeRaw = item.colorOutputModeRaw
+        item.renderedCanvasColorModeRaw = rendered.canvasColorMode.rawValue
+        needsDisplay = true
+    }
+
+    func renderImageTexture(
+        url: URL,
+        colorOutputModeRaw: Int,
+        canvasColorMode preferredCanvasColorMode: CanvasColorMode?
+    ) -> (texture: MTLTexture, pixelSize: CGSize, dynamicRange: MediaDynamicRange, canvasColorMode: CanvasColorMode)? {
+        let source = CGImageSourceCreateWithURL(url as CFURL, nil)
+        guard let ciImage = hdrAwareCIImage(contentsOf: url) else { return nil }
+        let dynamicRange = imageDynamicRange(source: source, ciImage: ciImage)
+        let canvasColorMode = preferredCanvasColorMode ?? canvasColorMode(adding: dynamicRange)
+        let displayImage = displayMappedImage(ciImage, dynamicRange: dynamicRange)
+        let renderColorSpace = imageRenderColorSpace(
+            for: dynamicRange,
+            colorOutputModeRaw: colorOutputModeRaw,
+            canvasColorMode: canvasColorMode
+        )
+        let extent = ciImage.extent.integral
+        guard extent.width > 0, extent.height > 0, extent.width.isFinite, extent.height.isFinite else { return nil }
+        let width = max(1, Int(ceil(extent.width)))
+        let height = max(1, Int(ceil(extent.height)))
+        let descriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: .rgba16Float,
+            width: width,
+            height: height,
+            mipmapped: true
+        )
+        descriptor.usage = [.shaderRead, .shaderWrite]
+        descriptor.storageMode = .private
+        guard let texture = device?.makeTexture(descriptor: descriptor) else { return nil }
+
+        let normalized = displayImage.transformed(by: CGAffineTransform(translationX: -extent.minX, y: -extent.minY))
+        // Keep EXIF orientation, then write rows in the top-left texture space used by the renderer.
+        let metalOriented = normalized.transformed(by: CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: CGFloat(height)))
+        imageContext.render(
+            metalOriented,
+            to: texture,
+            commandBuffer: nil,
+            bounds: CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)),
+            colorSpace: renderColorSpace
+        )
+        generateMipmaps(for: texture)
+        return (texture, CGSize(width: width, height: height), dynamicRange, canvasColorMode)
+    }
+
+    func displayMappedImage(_ image: CIImage, dynamicRange: MediaDynamicRange) -> CIImage {
+        guard dynamicRange.usesEDR else { return image }
+        if #available(macOS 15.0, *) {
+            let targetHeadroom = displayTargetHeadroom()
+            let sourceHeadroom = image.contentHeadroom
+            let toneMap = CIFilter.toneMapHeadroom()
+            toneMap.inputImage = image
+            toneMap.targetHeadroom = targetHeadroom
+            if sourceHeadroom > 1.01 {
+                toneMap.sourceHeadroom = sourceHeadroom
+            }
+            return toneMap.outputImage ?? image
+        }
+        return image
+    }
+
+    func imageRenderColorSpace(
+        for dynamicRange: MediaDynamicRange,
+        colorOutputModeRaw: Int,
+        canvasColorMode: CanvasColorMode
+    ) -> CGColorSpace {
+        switch ColorOutputMode(rawValue: colorOutputModeRaw) ?? .auto {
+        case .auto:
+            return colorSpace(for: canvasColorMode)
+        case .unmanaged:
+            return colorSpace(for: dynamicRange.canvasColorMode)
+        case .sRGB:
+            return mediaStandardColorSpace
+        case .displayP3:
+            return mediaDisplayColorSpace
+        case .linearSRGB:
+            return mediaLinearStandardColorSpace
+        case .linearDisplayP3:
+            return mediaWorkingColorSpace
+        }
+    }
+
+    func currentCanvasColorMode() -> CanvasColorMode {
+        let displayedItems = visibleSlots.isEmpty ? items : visibleSlots.map(\.item)
+        return layerOutputMode(for: displayedItems).canvasColorMode
+    }
+
+    func canvasColorMode(adding dynamicRange: MediaDynamicRange) -> CanvasColorMode {
+        let displayedItems = visibleSlots.isEmpty ? items : visibleSlots.map(\.item)
+        let existingRange = displayedItems
+            .map(\.dynamicRange)
+            .max { $0.priority < $1.priority } ?? .standard
+        return (dynamicRange.priority > existingRange.priority ? dynamicRange : existingRange).canvasColorMode
+    }
+
+    func syncVisibleMediaColorOutputs(for canvasColorMode: CanvasColorMode, items displayedItems: [CollageItem]) {
+        for item in displayedItems {
+            switch item.kind {
+            case .image:
+                guard item.renderedColorOutputModeRaw != item.colorOutputModeRaw ||
+                      item.renderedCanvasColorModeRaw != canvasColorMode.rawValue else { continue }
+                reloadImageTexture(for: item, canvasColorMode: canvasColorMode)
+            case .video:
+                guard item.videoOutputColorOutputModeRaw != item.colorOutputModeRaw ||
+                      item.videoOutputCanvasColorModeRaw != canvasColorMode.rawValue else { continue }
+                refreshVideoOutput(for: item, canvasColorMode: canvasColorMode)
+            }
+        }
+    }
+
+    func displayTargetHeadroom() -> Float {
+        let screen = window?.screen ?? NSScreen.main
+        let currentHeadroom = Float(screen?.maximumExtendedDynamicRangeColorComponentValue ?? 1)
+        let potentialHeadroom = Float(screen?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? CGFloat(currentHeadroom))
+        return max(1, currentHeadroom, potentialHeadroom)
     }
 
     func hdrAwareCIImage(contentsOf url: URL) -> CIImage? {
@@ -228,7 +355,13 @@ extension MetalCollageView {
         let dynamicRange = videoDynamicRange(formatDescriptions: metadata.formatDescriptions)
         let playerItem = AVPlayerItem(asset: asset)
         playerItem.preferredForwardBufferDuration = 0
-        let outputSettings = Self.videoOutputSettings(for: dynamicRange)
+        let colorOutputModeRaw = ColorOutputStore.modeRaw
+        let canvasColorMode = canvasColorMode(adding: dynamicRange)
+        let outputSettings = Self.videoOutputSettings(
+            for: dynamicRange,
+            colorOutputModeRaw: colorOutputModeRaw,
+            canvasColorMode: canvasColorMode
+        )
         let output = AVPlayerItemVideoOutput(outputSettings: outputSettings)
         output.suppressesPlayerRendering = true
         playerItem.add(output)
@@ -242,6 +375,9 @@ extension MetalCollageView {
         item.videoOutput = output
         item.videoTextureMapping = mapping
         item.dynamicRange = dynamicRange
+        item.colorOutputModeRaw = colorOutputModeRaw
+        item.videoOutputColorOutputModeRaw = colorOutputModeRaw
+        item.videoOutputCanvasColorModeRaw = canvasColorMode.rawValue
         item.muted = false
         item.volume = 1
         item.speed = 1
@@ -259,20 +395,114 @@ extension MetalCollageView {
         return item
     }
 
-    nonisolated private static func videoOutputSettings(for dynamicRange: MediaDynamicRange) -> [String: any Sendable] {
+    func refreshVideoOutput(for item: CollageItem) {
+        refreshVideoOutput(for: item, canvasColorMode: currentCanvasColorMode())
+    }
+
+    func refreshVideoOutput(for item: CollageItem, canvasColorMode: CanvasColorMode) {
+        guard item.kind == .video,
+              let playerItem = item.player?.currentItem else { return }
+        if let oldOutput = item.videoOutput {
+            playerItem.remove(oldOutput)
+        }
+        let outputSettings = Self.videoOutputSettings(
+            for: item.dynamicRange,
+            colorOutputModeRaw: item.colorOutputModeRaw,
+            canvasColorMode: canvasColorMode
+        )
+        let output = AVPlayerItemVideoOutput(outputSettings: outputSettings)
+        output.suppressesPlayerRendering = true
+        playerItem.add(output)
+        item.videoOutput = output
+        item.videoOutputColorOutputModeRaw = item.colorOutputModeRaw
+        item.videoOutputCanvasColorModeRaw = canvasColorMode.rawValue
+        item.texture = nil
+        item.currentVideoTextureRef = nil
+        item.previousVideoTexture = nil
+        item.previousVideoTextureRef = nil
+        item.videoLastItemTime = nil
+        item.videoLastHostTime = nil
+        item.didLogVideoBufferFormat = false
+        needsDisplay = true
+    }
+
+    nonisolated private static func videoOutputSettings(
+        for dynamicRange: MediaDynamicRange,
+        colorOutputModeRaw: Int,
+        canvasColorMode: CanvasColorMode
+    ) -> [String: any Sendable] {
+        switch ColorOutputMode(rawValue: colorOutputModeRaw) ?? .auto {
+        case .auto:
+            return automaticVideoOutputSettings(for: dynamicRange, canvasColorMode: canvasColorMode)
+        case .sRGB:
+            return sdrVideoOutputSettings(
+                primaries: AVVideoColorPrimaries_ITU_R_709_2,
+                transfer: AVVideoTransferFunction_ITU_R_709_2,
+                allowWideColor: false
+            )
+        case .displayP3:
+            return sdrVideoOutputSettings(
+                primaries: AVVideoColorPrimaries_P3_D65,
+                transfer: AVVideoTransferFunction_ITU_R_709_2,
+                allowWideColor: true
+            )
+        case .linearSRGB:
+            return linearVideoOutputSettings(primaries: AVVideoColorPrimaries_ITU_R_709_2)
+        case .linearDisplayP3:
+            return linearVideoOutputSettings(primaries: AVVideoColorPrimaries_P3_D65)
+        case .unmanaged:
+            return rawVideoOutputSettings(for: dynamicRange)
+        }
+    }
+
+    nonisolated private static func automaticVideoOutputSettings(
+        for dynamicRange: MediaDynamicRange,
+        canvasColorMode: CanvasColorMode
+    ) -> [String: any Sendable] {
+        guard canvasColorMode == .linearDisplayP3 else {
+            return sdrVideoOutputSettings(
+                primaries: AVVideoColorPrimaries_P3_D65,
+                transfer: AVVideoTransferFunction_ITU_R_709_2,
+                allowWideColor: true
+            )
+        }
+        return linearVideoOutputSettings(primaries: AVVideoColorPrimaries_P3_D65)
+    }
+
+    nonisolated private static func rawVideoOutputSettings(for dynamicRange: MediaDynamicRange) -> [String: any Sendable] {
         guard dynamicRange.usesEDR else {
             return [
                 kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
                 kCVPixelBufferMetalCompatibilityKey as String: true
             ]
         }
+        return linearVideoOutputSettings(primaries: AVVideoColorPrimaries_P3_D65)
+    }
 
+    nonisolated private static func sdrVideoOutputSettings(
+        primaries: String,
+        transfer: String,
+        allowWideColor: Bool
+    ) -> [String: any Sendable] {
         return [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferMetalCompatibilityKey as String: true,
+            AVVideoAllowWideColorKey: allowWideColor,
+            AVVideoColorPropertiesKey: [
+                AVVideoColorPrimariesKey: primaries,
+                AVVideoTransferFunctionKey: transfer,
+                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
+            ] as [String: any Sendable]
+        ]
+    }
+
+    nonisolated private static func linearVideoOutputSettings(primaries: String) -> [String: any Sendable] {
+        [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_64RGBAHalf,
             kCVPixelBufferMetalCompatibilityKey as String: true,
             AVVideoAllowWideColorKey: true,
             AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_P3_D65,
+                AVVideoColorPrimariesKey: primaries,
                 AVVideoTransferFunctionKey: AVVideoTransferFunction_Linear,
                 AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2
             ] as [String: any Sendable]

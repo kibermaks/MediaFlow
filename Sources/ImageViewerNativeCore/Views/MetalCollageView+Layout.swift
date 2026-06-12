@@ -37,7 +37,7 @@ extension MetalCollageView {
         guard bounds.width > 20, bounds.height > 20 else { return }
         guard !items.isEmpty else {
             visibleSlots.removeAll()
-            syncLayerEDRMetadata()
+            syncDisplayColorState()
             needsDisplay = true
             overlay.needsDisplay = true
             return
@@ -70,7 +70,7 @@ extension MetalCollageView {
             }
         }
         applyFlowVisibilityPlayback()
-        syncLayerEDRMetadata()
+        syncDisplayColorState()
         needsDisplay = true
         overlay.needsDisplay = true
         positionToolPanel()

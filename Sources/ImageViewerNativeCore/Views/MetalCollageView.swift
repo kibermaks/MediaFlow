@@ -25,6 +25,9 @@ final class MetalCollageView: MTKView {
     let imageContext: CIContext
     let imageCommandQueue: MTLCommandQueue?
     let mediaWorkingColorSpace: CGColorSpace
+    let mediaStandardColorSpace: CGColorSpace
+    let mediaLinearStandardColorSpace: CGColorSpace
+    let mediaDisplayColorSpace: CGColorSpace
     let renderer: MetalRenderer
     let overlay = OverlayView()
     let toolPanel = NSVisualEffectView()
@@ -129,7 +132,6 @@ final class MetalCollageView: MTKView {
         didSet {
             guard oldValue != frameInterpolationEnabled else { return }
             FrameInterpolationStore.enabled = frameInterpolationEnabled
-            renderer.frameInterpolationEnabled = frameInterpolationEnabled
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -139,7 +141,6 @@ final class MetalCollageView: MTKView {
         didSet {
             guard oldValue != naturalDenoiseEnabled else { return }
             NaturalDenoiseStore.enabled = naturalDenoiseEnabled
-            renderer.naturalDenoiseEnabled = naturalDenoiseEnabled
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -150,7 +151,6 @@ final class MetalCollageView: MTKView {
             naturalDenoiseStrength = max(0, min(1, naturalDenoiseStrength))
             guard oldValue != naturalDenoiseStrength else { return }
             NaturalDenoiseStore.strength = naturalDenoiseStrength
-            renderer.naturalDenoiseStrength = naturalDenoiseStrength
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -160,7 +160,6 @@ final class MetalCollageView: MTKView {
         didSet {
             guard oldValue != toneRecoveryEnabled else { return }
             ToneRecoveryStore.enabled = toneRecoveryEnabled
-            renderer.toneRecoveryEnabled = toneRecoveryEnabled
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -171,7 +170,6 @@ final class MetalCollageView: MTKView {
             toneRecoveryStrength = max(0, min(1, toneRecoveryStrength))
             guard oldValue != toneRecoveryStrength else { return }
             ToneRecoveryStore.strength = toneRecoveryStrength
-            renderer.toneRecoveryStrength = toneRecoveryStrength
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -182,7 +180,6 @@ final class MetalCollageView: MTKView {
             brightnessBoost = max(0, min(1, brightnessBoost))
             guard oldValue != brightnessBoost else { return }
             BrightnessBoostStore.strength = brightnessBoost
-            renderer.brightnessBoost = brightnessBoost
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -192,7 +189,6 @@ final class MetalCollageView: MTKView {
         didSet {
             guard oldValue != magicRescueEnabled else { return }
             MagicRescueStore.enabled = magicRescueEnabled
-            renderer.magicRescueEnabled = magicRescueEnabled
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -203,7 +199,6 @@ final class MetalCollageView: MTKView {
             magicRescueStrength = max(0, min(1, magicRescueStrength))
             guard oldValue != magicRescueStrength else { return }
             MagicRescueStore.strength = magicRescueStrength
-            renderer.magicRescueStrength = magicRescueStrength
             needsDisplay = true
             NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
@@ -243,12 +238,19 @@ final class MetalCollageView: MTKView {
 
     init(frame frameRect: NSRect, device: MTLDevice) {
         self.textureLoader = MTKTextureLoader(device: device)
+        let standardColorSpace = CGColorSpace(name: CGColorSpace.sRGB)!
+        let linearStandardColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+        let displayColorSpace = CGColorSpace(name: CGColorSpace.displayP3)
+            ?? standardColorSpace
         let workingColorSpace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
-            ?? CGColorSpace(name: CGColorSpace.extendedLinearSRGB)!
+            ?? linearStandardColorSpace
         self.mediaWorkingColorSpace = workingColorSpace
+        self.mediaStandardColorSpace = standardColorSpace
+        self.mediaLinearStandardColorSpace = linearStandardColorSpace
+        self.mediaDisplayColorSpace = displayColorSpace
         self.imageContext = CIContext(mtlDevice: device, options: [
             .workingColorSpace: workingColorSpace,
-            .outputColorSpace: workingColorSpace
+            .outputColorSpace: displayColorSpace
         ])
         self.imageCommandQueue = device.makeCommandQueue()
         guard let renderer = MetalRenderer(device: device, colorPixelFormat: .rgba16Float) else {
@@ -265,19 +267,11 @@ final class MetalCollageView: MTKView {
         preferredFramesPerSecond = 60
         delegate = renderer
         renderer.canvas = self
-        renderer.frameInterpolationEnabled = frameInterpolationEnabled
-        renderer.naturalDenoiseEnabled = naturalDenoiseEnabled
-        renderer.naturalDenoiseStrength = naturalDenoiseStrength
-        renderer.toneRecoveryEnabled = toneRecoveryEnabled
-        renderer.toneRecoveryStrength = toneRecoveryStrength
-        renderer.brightnessBoost = brightnessBoost
-        renderer.magicRescueEnabled = magicRescueEnabled
-        renderer.magicRescueStrength = magicRescueStrength
         renderer.splitCompareEnabled = splitCompareEnabled
         renderer.splitCompareReversed = splitCompareReversed
 
         wantsLayer = true
-        syncLayerEDRMetadata()
+        syncDisplayColorState()
         registerForDraggedTypes([.fileURL])
 
         overlay.canvas = self
@@ -324,27 +318,63 @@ final class MetalCollageView: MTKView {
         debugCPUPercent = debugInformationEnabled ? ProcessCPUUsage.currentPercent() : 0
     }
 
-    func syncLayerEDRMetadata() {
+    func syncDisplayColorState() {
         guard let metalLayer = layer as? CAMetalLayer else { return }
         let displayedItems = visibleSlots.isEmpty ? items : visibleSlots.map(\.item)
-        let dynamicRange = displayedItems
-            .map(\.dynamicRange)
-            .max { $0.priority < $1.priority } ?? .standard
+        let layerMode = layerOutputMode(for: displayedItems)
 
-        metalLayer.colorspace = mediaWorkingColorSpace
-        metalLayer.wantsExtendedDynamicRangeContent = dynamicRange.usesEDR
+        metalLayer.colorspace = layerColorSpace(for: layerMode)
+        metalLayer.wantsExtendedDynamicRangeContent = layerMode.usesEDR
+        syncVisibleMediaColorOutputs(for: layerMode.canvasColorMode, items: displayedItems)
+
         guard CAEDRMetadata.isAvailable else {
             metalLayer.edrMetadata = nil
             return
         }
 
-        switch dynamicRange {
+        switch layerMode.edrMetadataRange {
         case .hlg:
             metalLayer.edrMetadata = CAEDRMetadata.hlg
         case .pq:
             metalLayer.edrMetadata = CAEDRMetadata.hdr10(minLuminance: 0, maxLuminance: 1000, opticalOutputScale: 100)
         case .standard, .wide, .adaptiveHDR:
             metalLayer.edrMetadata = nil
+        }
+    }
+
+    struct LayerOutputMode {
+        var dynamicRange: MediaDynamicRange
+        var canvasColorMode: CanvasColorMode
+
+        var usesEDR: Bool {
+            canvasColorMode == .linearDisplayP3
+        }
+
+        var edrMetadataRange: MediaDynamicRange {
+            usesEDR ? dynamicRange : .standard
+        }
+    }
+
+    func layerOutputMode(for items: [CollageItem]) -> LayerOutputMode {
+        guard !items.isEmpty else {
+            return LayerOutputMode(dynamicRange: .standard, canvasColorMode: .displayP3)
+        }
+        let dynamicRange = items
+            .map(\.dynamicRange)
+            .max { $0.priority < $1.priority } ?? .standard
+        return LayerOutputMode(dynamicRange: dynamicRange, canvasColorMode: dynamicRange.canvasColorMode)
+    }
+
+    func layerColorSpace(for layerMode: LayerOutputMode) -> CGColorSpace? {
+        colorSpace(for: layerMode.canvasColorMode)
+    }
+
+    func colorSpace(for canvasColorMode: CanvasColorMode) -> CGColorSpace {
+        switch canvasColorMode {
+        case .displayP3:
+            return mediaDisplayColorSpace
+        case .linearDisplayP3:
+            return mediaWorkingColorSpace
         }
     }
 

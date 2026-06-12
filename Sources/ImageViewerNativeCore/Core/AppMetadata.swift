@@ -97,6 +97,58 @@ enum MediaDynamicRange: Int {
             return 4
         }
     }
+
+    var canvasColorMode: CanvasColorMode {
+        usesEDR ? .linearDisplayP3 : .displayP3
+    }
+}
+
+enum CanvasColorMode: Int {
+    case displayP3
+    case linearDisplayP3
+}
+
+enum ColorOutputMode: Int, CaseIterable {
+    case auto
+    case sRGB
+    case displayP3
+    case linearSRGB
+    case linearDisplayP3
+    case unmanaged
+
+    var displayName: String {
+        switch self {
+        case .auto:
+            return "Auto"
+        case .sRGB:
+            return "sRGB"
+        case .displayP3:
+            return "P3"
+        case .linearSRGB:
+            return "Lin sRGB"
+        case .linearDisplayP3:
+            return "Lin P3"
+        case .unmanaged:
+            return "Raw"
+        }
+    }
+
+    var tooltip: String {
+        switch self {
+        case .auto:
+            return "Use MediaFlow's detected color output for this file"
+        case .sRGB:
+            return "Force SDR sRGB output"
+        case .displayP3:
+            return "Force SDR Display P3 output"
+        case .linearSRGB:
+            return "Force extended linear sRGB output"
+        case .linearDisplayP3:
+            return "Force extended linear Display P3 output"
+        case .unmanaged:
+            return "Use the raw decoded texture path without changing the shared collage layer"
+        }
+    }
 }
 
 extension Notification.Name {

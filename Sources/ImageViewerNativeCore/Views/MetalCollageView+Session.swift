@@ -45,7 +45,7 @@ extension MetalCollageView {
         videoPanel.isHidden = true
         timelineView.item = nil
         isPaused = true
-        syncLayerEDRMetadata()
+        syncDisplayColorState()
     }
 
     func clearABHistoryForClosingItems() {

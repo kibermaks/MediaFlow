@@ -18,6 +18,18 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(MetalQualityMode.bicubic.shaderSamplingMode(isMinifying: false), 2)
     }
 
+    func testColorOutputModeLabelsStayCompact() {
+        XCTAssertEqual(ColorOutputMode.allCases.map(\.displayName), ["Auto", "sRGB", "P3", "Lin sRGB", "Lin P3", "Raw"])
+    }
+
+    func testDynamicRangeChoosesCanvasColorMode() {
+        XCTAssertEqual(MediaDynamicRange.standard.canvasColorMode, .displayP3)
+        XCTAssertEqual(MediaDynamicRange.wide.canvasColorMode, .displayP3)
+        XCTAssertEqual(MediaDynamicRange.adaptiveHDR.canvasColorMode, .linearDisplayP3)
+        XCTAssertEqual(MediaDynamicRange.hlg.canvasColorMode, .linearDisplayP3)
+        XCTAssertEqual(MediaDynamicRange.pq.canvasColorMode, .linearDisplayP3)
+    }
+
     func testVideoTextureMappingRejectsInvalidSizes() {
         XCTAssertNil(VideoTextureMapping.make(encodedSize: .zero, preferredTransform: .identity))
         XCTAssertNil(VideoTextureMapping.make(encodedSize: CGSize(width: CGFloat.infinity, height: 1080), preferredTransform: .identity))
@@ -135,5 +147,35 @@ final class CoreLogicTests: XCTestCase {
         XCTAssertEqual(saved.path, "/tmp/example.mov")
         XCTAssertEqual(saved.speed, 1)
         XCTAssertTrue(saved.abLoops.isEmpty)
+    }
+
+    func testLegacyQualityProfileDoesNotRequireProcessingToggle() throws {
+        let data = Data("""
+        {
+          "entries": {
+            "abc": {
+              "fileName": "example.jpg",
+              "updatedAt": "2026-06-12T10:00:00Z",
+              "qualityModeRaw": 0,
+              "frameInterpolationEnabled": true,
+              "naturalDenoiseEnabled": false,
+              "naturalDenoiseStrength": 0.72,
+              "toneRecoveryEnabled": false,
+              "toneRecoveryStrength": 0.58,
+              "brightnessBoost": 0,
+              "magicRescueEnabled": false,
+              "magicRescueStrength": 0.82
+            }
+          }
+        }
+        """.utf8)
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+
+        let library = try decoder.decode(SavedQualityLibrary.self, from: data)
+
+        XCTAssertNil(library.entries["abc"]?.qualityProcessingEnabled)
+        XCTAssertNil(library.entries["abc"]?.colorOutputModeRaw)
     }
 }

@@ -13,6 +13,36 @@ import Security
 import simd
 import UniformTypeIdentifiers
 
+enum QualityProcessingStore {
+    private static let key = "qualityProcessingEnabled"
+
+    static var enabled: Bool {
+        get {
+            guard UserDefaults.standard.object(forKey: key) != nil else { return true }
+            return UserDefaults.standard.bool(forKey: key)
+        }
+        set {
+            UserDefaults.standard.set(newValue, forKey: key)
+        }
+    }
+}
+
+enum ColorOutputStore {
+    private static let modeKey = "defaultColorOutputModeRaw"
+
+    static var modeRaw: Int {
+        get {
+            guard UserDefaults.standard.object(forKey: modeKey) != nil else { return ColorOutputMode.auto.rawValue }
+            let rawValue = UserDefaults.standard.integer(forKey: modeKey)
+            return ColorOutputMode(rawValue: rawValue)?.rawValue ?? ColorOutputMode.auto.rawValue
+        }
+        set {
+            let valid = ColorOutputMode(rawValue: newValue)?.rawValue ?? ColorOutputMode.auto.rawValue
+            UserDefaults.standard.set(valid, forKey: modeKey)
+        }
+    }
+}
+
 enum FrameInterpolationStore {
     private static let key = "frameInterpolationEnabled"
 

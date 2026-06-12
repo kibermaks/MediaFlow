@@ -30,7 +30,7 @@ extension AppDelegate {
 
     @MainActor func makeQualityPanel() -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 430, height: 650),
+            contentRect: NSRect(x: 0, y: 0, width: 430, height: 740),
             styleMask: [.titled, .closable, .utilityWindow, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -40,14 +40,14 @@ extension AppDelegate {
         panel.backgroundColor = .clear
         panel.isOpaque = false
         panel.titlebarAppearsTransparent = true
-        panel.minSize = NSSize(width: 390, height: 590)
+        panel.minSize = NSSize(width: 390, height: 680)
         panel.appearance = NSAppearance(named: .darkAqua)
         panel.isReleasedWhenClosed = false
         panel.isFloatingPanel = true
         panel.hidesOnDeactivate = false
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
 
-        let content = FlowPanelBackgroundView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 430, height: 650))
+        let content = FlowPanelBackgroundView(frame: panel.contentView?.bounds ?? NSRect(x: 0, y: 0, width: 430, height: 740))
         content.panelTitle = "Quality Controls"
         content.autoresizingMask = [.width, .height]
         let stack = NSStackView()
@@ -79,6 +79,17 @@ extension AppDelegate {
         addFullWidth(qualitySettingRow(title: "Edit Defaults", subtitle: "For new files", trailing: defaultsButton))
 
         addFullWidth(qualitySeparator())
+        addFullWidth(FlowLibraryStyle.sectionLabel("Color Output"))
+        let colorModeControl = FlowSegmentedControl()
+        colorModeControl.segments = ColorOutputMode.allCases.map(\.displayName)
+        colorModeControl.target = self
+        colorModeControl.action = #selector(qualityPanelColorModeChanged(_:))
+        colorModeControl.heightAnchor.constraint(equalToConstant: 30).isActive = true
+        colorModeControl.toolTip = "Diagnostic output colorspace for the selected file"
+        qualityPanelColorModeControl = colorModeControl
+        addFullWidth(colorModeControl)
+
+        addFullWidth(qualitySeparator())
         addFullWidth(FlowLibraryStyle.sectionLabel("Sampling"))
         let modeControl = FlowSegmentedControl()
         modeControl.segments = MetalQualityMode.allCases.map(\.displayName)
@@ -90,6 +101,13 @@ extension AppDelegate {
 
         addFullWidth(qualitySeparator())
         addFullWidth(FlowLibraryStyle.sectionLabel("Processing"))
+        let processing = FlowSwitchControl()
+        processing.target = self
+        processing.action = #selector(qualityPanelProcessingChanged(_:))
+        processing.toolTip = "Master bypass for this file's saved quality profile"
+        qualityPanelProcessingButton = processing
+        addFullWidth(qualitySettingRow(title: "File Enhancements", subtitle: "Saved per file", trailing: processing))
+
         let frameInterpolation = FlowSwitchControl()
         frameInterpolation.target = self
         frameInterpolation.action = #selector(qualityPanelFrameInterpolationChanged(_:))
@@ -249,6 +267,15 @@ extension AppDelegate {
         canvas?.setQualityEditsDefaults(sender.isOn)
     }
 
+    @MainActor @objc func qualityPanelColorModeChanged(_ sender: FlowSegmentedControl) {
+        let mode = ColorOutputMode(rawValue: sender.selectedIndex) ?? .auto
+        canvas?.setColorOutputMode(mode)
+    }
+
+    @MainActor @objc func qualityPanelProcessingChanged(_ sender: FlowSwitchControl) {
+        canvas?.setQualityProcessingEnabled(sender.isOn)
+    }
+
     @MainActor @objc func qualityPanelFrameInterpolationChanged(_ sender: FlowSwitchControl) {
         canvas?.setFrameInterpolationEnabled(sender.isOn)
     }
@@ -307,28 +334,41 @@ extension AppDelegate {
         qualityPanelTargetLabel?.stringValue = "Target: \(canvas.activeQualityTargetName())"
         qualityPanelDefaultsButton?.isOn = canvas.isEditingQualityDefaults()
         qualityPanelDefaultsButton?.isEnabled = canvas.hasQualityTargetItem()
+        qualityPanelColorModeControl?.selectedIndex = canvas.activeColorOutputMode().rawValue
+        let processingEnabled = canvas.activeQualityProcessingEnabled()
+        qualityPanelProcessingButton?.isOn = processingEnabled
         qualityPanelModeControl?.selectedIndex = canvas.activeMetalQualityMode().rawValue
+        qualityPanelModeControl?.isEnabled = processingEnabled
         qualityPanelFrameInterpolationButton?.isOn = canvas.activeFrameInterpolationEnabled()
+        qualityPanelFrameInterpolationButton?.isEnabled = processingEnabled
         qualityPanelDenoiseButton?.isOn = canvas.activeNaturalDenoiseEnabled()
+        qualityPanelDenoiseButton?.isEnabled = processingEnabled
         qualityPanelDenoiseSlider?.doubleValue = Double(canvas.activeNaturalDenoiseStrength())
-        qualityPanelDenoiseSlider?.isEnabled = canvas.activeNaturalDenoiseEnabled()
+        qualityPanelDenoiseSlider?.isEnabled = processingEnabled && canvas.activeNaturalDenoiseEnabled()
         qualityPanelDenoiseValue?.stringValue = percent(canvas.activeNaturalDenoiseStrength())
         qualityPanelToneButton?.isOn = canvas.activeToneRecoveryEnabled()
+        qualityPanelToneButton?.isEnabled = processingEnabled
+        let toneEnabled = processingEnabled && canvas.activeToneRecoveryEnabled()
         qualityPanelToneSlider?.doubleValue = Double(canvas.activeToneRecoveryStrength())
-        qualityPanelToneSlider?.isEnabled = canvas.activeToneRecoveryEnabled()
+        qualityPanelToneSlider?.isEnabled = toneEnabled
         qualityPanelToneValue?.stringValue = percent(canvas.activeToneRecoveryStrength())
         qualityPanelBrightnessSlider?.doubleValue = Double(canvas.activeBrightnessBoost())
+        qualityPanelBrightnessSlider?.isEnabled = toneEnabled
         qualityPanelBrightnessValue?.stringValue = percent(canvas.activeBrightnessBoost())
         qualityPanelMagicButton?.isOn = canvas.activeMagicRescueEnabled()
+        qualityPanelMagicButton?.isEnabled = processingEnabled
         qualityPanelMagicSlider?.doubleValue = Double(canvas.activeMagicRescueStrength())
-        qualityPanelMagicSlider?.isEnabled = canvas.activeMagicRescueEnabled()
+        qualityPanelMagicSlider?.isEnabled = processingEnabled && canvas.activeMagicRescueEnabled()
         qualityPanelMagicValue?.stringValue = percent(canvas.activeMagicRescueStrength())
         qualityPanelSplitButton?.isOn = canvas.splitCompareEnabled
         qualityPanelSplitReverseButton?.isOn = canvas.splitCompareReversed
         qualityPanelSplitReverseButton?.isEnabled = canvas.splitCompareEnabled
         frameInterpolationMenuItem?.state = canvas.activeFrameInterpolationEnabled() ? .on : .off
+        frameInterpolationMenuItem?.isEnabled = processingEnabled
         naturalDenoiseMenuItem?.state = canvas.activeNaturalDenoiseEnabled() ? .on : .off
+        naturalDenoiseMenuItem?.isEnabled = processingEnabled
         magicRescueMenuItem?.state = canvas.activeMagicRescueEnabled() ? .on : .off
+        magicRescueMenuItem?.isEnabled = processingEnabled
     }
 
     @MainActor func percent(_ value: Float) -> String {

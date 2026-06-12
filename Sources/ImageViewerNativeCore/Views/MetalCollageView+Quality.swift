@@ -43,6 +43,14 @@ extension MetalCollageView {
         return MetalQualityMode(rawValue: item.qualityModeRaw) ?? .best
     }
 
+    func activeQualityProcessingEnabled() -> Bool {
+        qualityTargetItem()?.qualityProcessingEnabled ?? QualityProcessingStore.enabled
+    }
+
+    func activeColorOutputMode() -> ColorOutputMode {
+        ColorOutputMode(rawValue: qualityTargetItem()?.colorOutputModeRaw ?? ColorOutputStore.modeRaw) ?? .auto
+    }
+
     func activeFrameInterpolationEnabled() -> Bool {
         qualityTargetItem()?.frameInterpolationEnabled ?? frameInterpolationEnabled
     }
@@ -93,6 +101,35 @@ extension MetalCollageView {
         } else {
             metalQualityMode = mode
             DefaultQualityStore.qualityModeRaw = mode.rawValue
+        }
+    }
+
+    func setQualityProcessingEnabled(_ enabled: Bool) {
+        if let item = qualityTargetItem() {
+            item.qualityProcessingEnabled = enabled
+            persistQualitySettings(for: item)
+        } else {
+            QualityProcessingStore.enabled = enabled
+            needsDisplay = true
+            NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
+        }
+    }
+
+    func setColorOutputMode(_ mode: ColorOutputMode) {
+        if let item = qualityTargetItem() {
+            let canvasColorMode = currentCanvasColorMode()
+            item.colorOutputModeRaw = mode.rawValue
+            if item.kind == .image {
+                reloadImageTexture(for: item, canvasColorMode: canvasColorMode)
+            } else {
+                refreshVideoOutput(for: item, canvasColorMode: canvasColorMode)
+                needsDisplay = true
+            }
+            persistQualitySettings(for: item)
+        } else {
+            ColorOutputStore.modeRaw = mode.rawValue
+            needsDisplay = true
+            NotificationCenter.default.post(name: .qualitySettingsChanged, object: self)
         }
     }
 

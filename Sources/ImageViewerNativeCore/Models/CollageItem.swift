@@ -42,6 +42,12 @@ final class CollageItem: Equatable, @unchecked Sendable {
     var abLoopBypassUntil: TimeInterval = 0
     var fileHash: String?
     var hasSavedABHistory = false
+    var qualityProcessingEnabled = QualityProcessingStore.enabled
+    var colorOutputModeRaw = ColorOutputStore.modeRaw
+    var renderedColorOutputModeRaw: Int?
+    var renderedCanvasColorModeRaw: Int?
+    var videoOutputColorOutputModeRaw: Int?
+    var videoOutputCanvasColorModeRaw: Int?
     var qualityModeRaw = DefaultQualityStore.qualityModeRaw
     var frameInterpolationEnabled = FrameInterpolationStore.enabled
     var naturalDenoiseEnabled = NaturalDenoiseStore.enabled
