@@ -2,6 +2,19 @@
 
 All notable MediaFlow changes are tracked here. Keep the newest release first and attach the matching DMG to the GitHub Release for self-updates.
 
+## [0.7] - 2026-06-12
+
+### Added
+- Per-file Quality Controls master switch for saved file enhancements.
+- Diagnostic Color Output selector for per-file image and video color output troubleshooting.
+- `scripts/inspect-media-file.swift` for ImageIO, Core Image, and AVFoundation media diagnostics.
+
+### Changed
+- Mixed photo/video collages now render into a stable canvas color mode so SDR video does not wash out Display P3 photos.
+- HDR-aware still image loading now tone-maps adaptive HDR material against display headroom.
+- Brightness now follows the Auto Tone checkbox in both the UI and renderer.
+- Quality profile loading now preserves compatibility with older saved profiles.
+
 ## [0.6] - 2026-06-01
 
 ### Changed
